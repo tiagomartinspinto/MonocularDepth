@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta
+      name="description"
+      content="Monocular Depth is an interactive browser artwork about depth learned through motion, scale, occlusion, memory, and compensation."
+    >
+    <title>Monocular Depth</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main aria-label="Monocular Depth interactive artwork">
+      <canvas id="depth-field" aria-hidden="true"></canvas>
+    </main>
+
+    <footer class="controls" aria-label="Artwork controls">
+      <label class="range-control" for="perception">
+        <span>perception</span>
+        <input
+          id="perception"
+          name="perception"
+          type="range"
+          min="0"
+          max="2"
+          step="0.01"
+          value="0.88"
+          aria-label="Perception: clear to adapted to unstable"
+        >
+      </label>
+
+      <label class="toggle-control">
+        <input id="motion-depth" name="motion-depth" type="checkbox" checked>
+        <span>motion depth</span>
+      </label>
+
+      <label class="toggle-control">
+        <input id="text-toggle" name="text-toggle" type="checkbox" checked>
+        <span>text</span>
+      </label>
+    </footer>
+
+    <noscript>
+      <p class="noscript">Monocular Depth needs JavaScript to draw its perceptual field.</p>
+    </noscript>
+
+    <script src="main.js" defer></script>
+  </body>
+</html>
