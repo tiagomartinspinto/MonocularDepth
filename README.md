@@ -1,14 +1,14 @@
 # Monocular Depth
 
-Monocular Depth is a quiet interactive browser artwork about growing up with amblyopia in one eye. It treats depth as something learned through motion, scale, opacity, memory, and compensation rather than through stereoscopic certainty.
+Monocular Depth is a browser-based artwork exploring how depth and space can emerge through adaptation, motion, and perception.
 
-The piece opens into a fullscreen dark field. A sharper dominant perception layer and a dimmer delayed amblyopic layer move together as one landscape, so the work feels like perception being negotiated rather than a medical diagram.
+The piece opens into a fullscreen dark field where two perceptual systems overlap. One remains stable and responsive; the other arrives slightly late, offset, dimmer, and occasionally unstable. Together they form a quiet field of negotiated space rather than a diagram or simulation.
 
 Public version: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagomartinspinto.github.io/MonocularDepth/)
 
 ## Performance
 
-This is the first safe version. Safe mode is always on:
+This is a static, performance-safe version:
 
 - one canvas
 - no external libraries

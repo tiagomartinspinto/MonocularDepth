@@ -16,11 +16,14 @@
   const TAU = Math.PI * 2;
 
   const fragments = [
-    "depth without stereo",
-    "one eye learned distance",
-    "the world arrived through motion",
-    "not flat, but negotiated",
-    "seeing is compensation"
+    "distance learned itself",
+    "space arrives slowly",
+    "depth from movement",
+    "not fixed",
+    "between surfaces",
+    "perception compensates",
+    "the image reorganizes",
+    "motion becomes space"
   ];
 
   const particles = [];
@@ -38,10 +41,10 @@
     pointerActive: false,
     pointerX: 0.5,
     pointerY: 0.5,
-    gazeX: 0.5,
-    gazeY: 0.5,
-    delayedX: 0.5,
-    delayedY: 0.5,
+    systemAX: 0.5,
+    systemAY: 0.5,
+    systemBX: 0.5,
+    systemBY: 0.5,
     perception: Number(perceptionInput.value),
     instability: 0.44,
     motionDepth: motionToggle.checked,
@@ -139,11 +142,11 @@
     state.reducedMotion = reducedMotionQuery.matches;
 
     const level = state.perception / 2;
-    let text = "clear";
+    let text = "stable";
     if (level >= 0.72) {
       text = "unstable";
     } else if (level >= 0.34) {
-      text = "adapted";
+      text = "adaptive";
     }
     perceptionInput.setAttribute("aria-valuetext", text);
   }
@@ -247,10 +250,10 @@
     const quick = clamp((state.reducedMotion ? 0.035 : 0.085) * delta, 0, 0.24);
     const slow = clamp((state.reducedMotion ? 0.01 : 0.025) * delta, 0, 0.14);
 
-    state.gazeX += (targetX - state.gazeX) * quick;
-    state.gazeY += (targetY - state.gazeY) * quick;
-    state.delayedX += (targetX - state.delayedX) * slow;
-    state.delayedY += (targetY - state.delayedY) * slow;
+    state.systemAX += (targetX - state.systemAX) * quick;
+    state.systemAY += (targetY - state.systemAY) * quick;
+    state.systemBX += (targetX - state.systemBX) * slow;
+    state.systemBY += (targetY - state.systemBY) * slow;
   }
 
   function updateParticles(delta) {
@@ -258,8 +261,8 @@
     const reduced = state.reducedMotion ? 0.15 : 1;
     const drift = motion * reduced;
     const follow = clamp((state.reducedMotion ? 0.004 : 0.012) * delta, 0, 0.08);
-    const sharpParallax = state.motionDepth ? 0.12 : 0.035;
-    const softParallax = state.motionDepth ? 0.17 : 0.05;
+    const systemAParallax = state.motionDepth ? 0.12 : 0.035;
+    const systemBParallax = state.motionDepth ? 0.17 : 0.05;
     const offsetX = lerp(1.4, 6.8, state.instability);
     const offsetY = lerp(0.8, 4.4, state.instability);
 
@@ -273,13 +276,13 @@
       p.x += (targetX - p.x) * follow;
       p.y += (targetY - p.y) * follow;
 
-      p.x1 = (p.x + (state.gazeX - 0.5) * sharpParallax * depthPush) * state.width;
-      p.y1 = (p.y + (state.gazeY - 0.5) * sharpParallax * depthPush) * state.height;
+      p.x1 = (p.x + (state.systemAX - 0.5) * systemAParallax * depthPush) * state.width;
+      p.y1 = (p.y + (state.systemAY - 0.5) * systemAParallax * depthPush) * state.height;
       p.x2 =
-        (p.x + (state.delayedX - 0.5) * softParallax * depthPush) * state.width +
+        (p.x + (state.systemBX - 0.5) * systemBParallax * depthPush) * state.width +
         offsetX * (0.5 + p.depth);
       p.y2 =
-        (p.y + (state.delayedY - 0.5) * softParallax * depthPush) * state.height +
+        (p.y + (state.systemBY - 0.5) * systemBParallax * depthPush) * state.height +
         offsetY * (1 - p.depth);
     }
   }
@@ -315,7 +318,7 @@
     ctx.globalAlpha = 1;
   }
 
-  function drawAmblyopicLayer() {
+  function drawSystemB() {
     ctx.fillStyle = "#cbcbc3";
 
     for (let index = 0; index < state.particleCount; index += 1) {
@@ -348,7 +351,7 @@
     ctx.globalAlpha = 1;
   }
 
-  function drawDominantLayer() {
+  function drawSystemA() {
     ctx.fillStyle = "#ededE6";
 
     for (let index = 0; index < state.particleCount; index += 1) {
@@ -384,11 +387,11 @@
       if (visible < 0.025) continue;
 
       const x = clamp(
-        note.x * state.width + (state.delayedX - 0.5) * 14,
+        note.x * state.width + (state.systemBX - 0.5) * 14,
         note.width / 2 + 18,
         state.width - note.width / 2 - 18
       );
-      const y = note.y * state.height + (state.delayedY - 0.5) * 10;
+      const y = note.y * state.height + (state.systemBY - 0.5) * 10;
 
       ctx.globalAlpha = visible * 0.12;
       ctx.fillText(note.text, x, y);
@@ -400,10 +403,10 @@
   function drawStillFrame() {
     clearField();
     updateParticles(1);
-    drawAmblyopicLayer();
+    drawSystemB();
     drawLines();
     drawOcclusion();
-    drawDominantLayer();
+    drawSystemA();
     drawTextFragments();
   }
 
@@ -423,10 +426,10 @@
     updateGaze(delta);
     updateParticles(delta);
     clearField();
-    drawAmblyopicLayer();
+    drawSystemB();
     drawLines();
     drawOcclusion();
-    drawDominantLayer();
+    drawSystemA();
     drawTextFragments();
 
     state.animationId = window.requestAnimationFrame(drawFrame);

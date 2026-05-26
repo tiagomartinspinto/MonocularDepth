@@ -4,21 +4,21 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 
 ## Completed Changes
 
-- Created the first safe version of Monocular Depth as a static HTML/CSS/JS project.
-- Kept the app to one fullscreen canvas with no backend, no dependencies, and no network calls.
+- Reframed Monocular Depth as an abstract browser artwork about perception, adaptation, compensation, and learned space.
+- Removed earlier specific-context framing from the public copy and project notes.
+- Kept the app to a static HTML/CSS/JS site with no backend, no dependencies, no npm, and no build step.
+- Kept one fullscreen canvas and one bottom-centered control surface.
 - Limited particles to a maximum of `60` on desktop and `35` on mobile.
 - Capped canvas `devicePixelRatio` at `1.5`.
 - Removed per-frame blur filters, canvas shadows, heavy glow, gradients, and particle burst effects.
-- Built depth cues from only size, alpha, speed, parallax, and simple line connections.
-- Added a lightweight occlusion pass using simple dark circles from nearby particles.
-- Preserved the poetic two-layer perception model: a sharper responsive dominant layer and a delayed, offset, dimmer amblyopic layer.
-- Added bottom-centered controls for perception, motion depth, and text fragments.
-- Added subtle text fragments that fade in and out inside the field.
+- Built depth cues from motion, scale, opacity, speed, parallax, and lightweight occlusion.
+- Preserved two interacting perceptual systems: one stable and responsive, one delayed, offset, dimmer, and subtly unstable.
+- Updated text fragments to abstract language: “distance learned itself”, “space arrives slowly”, “depth from movement”, “not fixed”, “between surfaces”, “perception compensates”, “the image reorganizes”, and “motion becomes space”.
+- Updated the perception slider language to stable, adaptive, and unstable.
 - Paused animation when the document is hidden.
 - Added reduced-motion behavior that slows the field and lowers render scale.
-- Added debounced resize handling.
-- Added keyboard support and screen-reader value text for the perception slider.
-- Updated README with concept, local testing, manual performance checks, GitHub Pages deployment, and privacy notes.
+- Kept debounced resize handling.
+- Updated README with the abstract concept, Pages URL, local testing, manual performance checks, GitHub Pages deployment, and privacy notes.
 
 ## Files Changed
 
@@ -32,14 +32,14 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 
 - Test on the laptop/browser combination that previously froze.
 - Tune particle count or line distance lower if that machine still shows high CPU/GPU usage.
-- Enable GitHub Pages after the first push if it is not already enabled in repository settings.
+- Re-check the Pages CDN after cache expiry if an old asset is still visible immediately after deployment.
 
 ## Known Issues
 
 - The visual field is intentionally subtle and may look very dim on low-brightness displays.
 - Canvas rendering and frame pacing can vary across browsers and battery-saver modes.
 - Real CPU/GPU impact should be checked on the target machine, not only through static validation.
-- GitHub Pages may take a short moment to refresh after a push.
+- GitHub Pages can take a short moment to refresh cached assets after a push.
 
 ## Local Verification
 
@@ -47,8 +47,8 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Confirmed the local static server serves `index.html` and `main.js`.
 - Scanned app files for removed heavy APIs and allocation patterns: no `ctx.filter`, canvas shadows, gradients, `.map()`, `.forEach()`, or external network/tracking APIs were found.
 - Confirmed the code includes `requestAnimationFrame`, `cancelAnimationFrame`, `document.hidden`, `visibilitychange`, capped `devicePixelRatio`, debounced resize, and particle-count constants.
+- Scanned public files for terms from the earlier framing and found none remaining.
 - Pushed to `main` and confirmed the public Pages URL returns HTTP `200`.
-- Confirmed a cache-busted Pages request for `main.js` returns the updated public release file.
 
 ## Manual Tests To Do Next
 
