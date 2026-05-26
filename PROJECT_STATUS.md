@@ -47,7 +47,8 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Confirmed the local static server serves `index.html` and `main.js`.
 - Scanned app files for removed heavy APIs and allocation patterns: no `ctx.filter`, canvas shadows, gradients, `.map()`, `.forEach()`, or external network/tracking APIs were found.
 - Confirmed the code includes `requestAnimationFrame`, `cancelAnimationFrame`, `document.hidden`, `visibilitychange`, capped `devicePixelRatio`, debounced resize, and particle-count constants.
-- Confirm the public Pages URL after deployment: `https://tiagomartinspinto.github.io/MonocularDepth/`.
+- Pushed to `main` and confirmed the public Pages URL returns HTTP `200`.
+- Confirmed a cache-busted Pages request for `main.js` returns the updated public release file.
 
 ## Manual Tests To Do Next
 
