@@ -332,6 +332,22 @@
     ctx.globalAlpha = 1;
   }
 
+  function drawOcclusion() {
+    ctx.fillStyle = "#050506";
+
+    for (let index = 0; index < state.particleCount; index += 1) {
+      const p = particles[index];
+      if (p.depth < 0.78 || p.lineBias < 0.42) continue;
+
+      ctx.globalAlpha = 0.035;
+      ctx.beginPath();
+      ctx.arc(p.x1, p.y1, p.radius * 5.2, 0, TAU);
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
   function drawDominantLayer() {
     ctx.fillStyle = "#ededE6";
 
@@ -386,6 +402,7 @@
     updateParticles(1);
     drawAmblyopicLayer();
     drawLines();
+    drawOcclusion();
     drawDominantLayer();
     drawTextFragments();
   }
@@ -408,6 +425,7 @@
     clearField();
     drawAmblyopicLayer();
     drawLines();
+    drawOcclusion();
     drawDominantLayer();
     drawTextFragments();
 

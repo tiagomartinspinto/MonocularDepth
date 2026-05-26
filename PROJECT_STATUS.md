@@ -1,5 +1,7 @@
 # Project Status
 
+Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagomartinspinto.github.io/MonocularDepth/)
+
 ## Completed Changes
 
 - Created the first safe version of Monocular Depth as a static HTML/CSS/JS project.
@@ -8,6 +10,7 @@
 - Capped canvas `devicePixelRatio` at `1.5`.
 - Removed per-frame blur filters, canvas shadows, heavy glow, gradients, and particle burst effects.
 - Built depth cues from only size, alpha, speed, parallax, and simple line connections.
+- Added a lightweight occlusion pass using simple dark circles from nearby particles.
 - Preserved the poetic two-layer perception model: a sharper responsive dominant layer and a delayed, offset, dimmer amblyopic layer.
 - Added bottom-centered controls for perception, motion depth, and text fragments.
 - Added subtle text fragments that fade in and out inside the field.
@@ -36,6 +39,7 @@
 - The visual field is intentionally subtle and may look very dim on low-brightness displays.
 - Canvas rendering and frame pacing can vary across browsers and battery-saver modes.
 - Real CPU/GPU impact should be checked on the target machine, not only through static validation.
+- GitHub Pages may take a short moment to refresh after a push.
 
 ## Local Verification
 
@@ -43,6 +47,7 @@
 - Confirmed the local static server serves `index.html` and `main.js`.
 - Scanned app files for removed heavy APIs and allocation patterns: no `ctx.filter`, canvas shadows, gradients, `.map()`, `.forEach()`, or external network/tracking APIs were found.
 - Confirmed the code includes `requestAnimationFrame`, `cancelAnimationFrame`, `document.hidden`, `visibilitychange`, capped `devicePixelRatio`, debounced resize, and particle-count constants.
+- Confirm the public Pages URL after deployment: `https://tiagomartinspinto.github.io/MonocularDepth/`.
 
 ## Manual Tests To Do Next
 

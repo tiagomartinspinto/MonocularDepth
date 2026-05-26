@@ -4,6 +4,8 @@ Monocular Depth is a quiet interactive browser artwork about growing up with amb
 
 The piece opens into a fullscreen dark field. A sharper dominant perception layer and a dimmer delayed amblyopic layer move together as one landscape, so the work feels like perception being negotiated rather than a medical diagram.
 
+Public version: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagomartinspinto.github.io/MonocularDepth/)
+
 ## Performance
 
 This is the first safe version. Safe mode is always on:
