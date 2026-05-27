@@ -3,31 +3,269 @@
 
   const canvas = document.getElementById("depth-field");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const perceptionInput = document.getElementById("perception");
-  const motionToggle = document.getElementById("motion-depth");
-  const textToggle = document.getElementById("text-toggle");
   const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const MAX_DESKTOP_PARTICLES = 60;
   const MAX_MOBILE_PARTICLES = 35;
   const MOBILE_BREAKPOINT = 640;
   const MAX_DPR = 1.5;
-  const RESIZE_DELAY = 140;
+  const TEXT_EVENT_COUNT = 96;
   const TAU = Math.PI * 2;
 
-  const fragments = [
-    "distance learned itself",
-    "space arrives slowly",
-    "depth from movement",
-    "not fixed",
-    "between surfaces",
-    "perception compensates",
-    "the image reorganizes",
-    "motion becomes space"
+  const SUBJECTS = [
+    "the staircase",
+    "a escada",
+    "a escaleira",
+    "portaikko",
+    "the wall",
+    "a parede",
+    "seinä",
+    "the room",
+    "a sala",
+    "a habitación",
+    "huone",
+    "the horizon",
+    "o horizonte",
+    "horisontti",
+    "the corridor",
+    "o corredor",
+    "käytävä",
+    "the image",
+    "a imagem",
+    "a imaxe",
+    "kuva",
+    "the shadow",
+    "a sombra",
+    "varjo",
+    "the surface",
+    "a superfície",
+    "pinta",
+    "the window",
+    "a janela",
+    "a fiestra",
+    "ikkuna",
+    "the floor",
+    "o chão",
+    "o chan",
+    "lattia",
+    "the corner",
+    "o canto",
+    "o recuncho",
+    "kulma",
+    "the memory",
+    "a memória",
+    "a memoria",
+    "muisti",
+    "the map",
+    "o mapa",
+    "kartta",
+    "the object",
+    "o objeto",
+    "o obxecto",
+    "esine",
+    "the weather",
+    "o tempo",
+    "sää"
+  ];
+
+  const VERBS = [
+    "forgot",
+    "esqueceu",
+    "unohti",
+    "borrowed",
+    "emprestou",
+    "lainasi",
+    "folded",
+    "dobrou",
+    "taittoi",
+    "misplaced",
+    "perdeu",
+    "kadotti",
+    "refused",
+    "recusou",
+    "rexeitou",
+    "kieltäytyi",
+    "swallowed",
+    "engoliu",
+    "tragou",
+    "nielaisi",
+    "rearranged",
+    "reorganizou",
+    "reordenou",
+    "järjesti",
+    "delayed",
+    "atrasou",
+    "viivästytti",
+    "translated",
+    "traduziu",
+    "traduciu",
+    "käänsi",
+    "interrupted",
+    "interrompeu",
+    "keskeytti",
+    "removed",
+    "removeu",
+    "poisti",
+    "invented",
+    "inventou",
+    "keksi",
+    "rotated",
+    "rodou",
+    "kiersi"
+  ];
+
+  const OBJECTS = [
+    "the horizon",
+    "o horizonte",
+    "horisontti",
+    "tomorrow",
+    "amanhã",
+    "mañá",
+    "huomenna",
+    "silence",
+    "silêncio",
+    "silencio",
+    "hiljaisuus",
+    "distance",
+    "distância",
+    "distancia",
+    "etäisyys",
+    "weather",
+    "tempo",
+    "sää",
+    "memory",
+    "memória",
+    "memoria",
+    "muisti",
+    "the image",
+    "a imagem",
+    "a imaxe",
+    "kuva",
+    "the room",
+    "a sala",
+    "huone",
+    "the shadow",
+    "a sombra",
+    "varjo",
+    "geometry",
+    "geometria",
+    "geometría",
+    "surface",
+    "superfície",
+    "superficie",
+    "pinta",
+    "perspective",
+    "perspetiva",
+    "perspectiva"
+  ];
+
+  const QUALIFIERS = [
+    "without permission",
+    "sem permissão",
+    "sen permiso",
+    "ilman lupaa",
+    "sideways",
+    "de lado",
+    "sivuttain",
+    "in silence",
+    "em silêncio",
+    "en silencio",
+    "hiljaa",
+    "by mistake",
+    "por engano",
+    "vahingossa",
+    "inside the wall",
+    "dentro da parede",
+    "seinän sisällä",
+    "for no reason",
+    "sem razão",
+    "sen razón",
+    "ilman syytä",
+    "near the horizon",
+    "junto ao horizonte",
+    "horisontin lähellä",
+    "against perspective"
+  ];
+
+  const ADJECTIVES = [
+    "unfinished",
+    "inacabado",
+    "keskeneräinen",
+    "borrowed",
+    "emprestado",
+    "lainattu",
+    "slow",
+    "lento",
+    "hidas",
+    "sideways",
+    "oblíquo",
+    "oblicuo",
+    "vino",
+    "misplaced",
+    "perdido",
+    "kadonnut",
+    "silent",
+    "silencioso",
+    "hiljainen",
+    "accidental",
+    "acidental",
+    "satunnainen",
+    "folded",
+    "dobrado",
+    "taitettu",
+    "soft",
+    "suave",
+    "pehmeä"
+  ];
+
+  const HYBRID_LEFT = [
+    "hori",
+    "sombra",
+    "muisti",
+    "pinta",
+    "escada",
+    "silenç",
+    "varjo",
+    "dobra",
+    "lattia",
+    "recuncho",
+    "kuva",
+    "etä",
+    "janela",
+    "huone",
+    "kartta",
+    "porta",
+    "sein",
+    "tempo",
+    "obxecto",
+    "fiestra"
+  ];
+
+  const HYBRID_RIGHT = [
+    "seinä",
+    "space",
+    "distance",
+    "wall",
+    "ikko",
+    "aisuus",
+    "horizonte",
+    "motion",
+    "memory",
+    "sombra",
+    "distância",
+    "ikkuna",
+    "horizon",
+    "perspectiva",
+    "huone",
+    "geometria",
+    "pinta",
+    "varjo",
+    "mapa",
+    "kulma"
   ];
 
   const particles = [];
-  const notes = [];
+  const textEvents = [];
 
   const state = {
     width: 1,
@@ -36,7 +274,7 @@
     time: 0,
     lastTime: 0,
     animationId: 0,
-    resizeTimer: 0,
+    resizeId: 0,
     particleCount: 0,
     pointerActive: false,
     pointerX: 0.5,
@@ -45,12 +283,13 @@
     systemAY: 0.5,
     systemBX: 0.5,
     systemBY: 0.5,
-    perception: Number(perceptionInput.value),
-    instability: 0.44,
-    motionDepth: motionToggle.checked,
-    showText: textToggle.checked,
+    perception: 1.04,
+    instability: 0.52,
+    motionDepth: true,
     reducedMotion: reducedMotionQuery.matches,
-    textFont: "16px ui-serif, Georgia, serif"
+    textFont: "15px ui-serif, Georgia, serif",
+    textIndex: 0,
+    textElapsed: 0
   };
 
   function clamp(value, min, max) {
@@ -69,6 +308,38 @@
 
   function rand(min, max) {
     return min + Math.random() * (max - min);
+  }
+
+  function pick(bank) {
+    return bank[Math.floor(Math.random() * bank.length)];
+  }
+
+  function hybridWord() {
+    return `${pick(HYBRID_LEFT)}${pick(HYBRID_RIGHT)}`;
+  }
+
+  function generateSentence() {
+    const template = Math.floor(Math.random() * 17);
+
+    if (template === 0) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)}`;
+    if (template === 1) {
+      return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)} ${pick(QUALIFIERS)}`;
+    }
+    if (template === 2) return `${pick(ADJECTIVES)} ${pick(OBJECTS)}`;
+    if (template === 3) return `${pick(OBJECTS)} without ${pick(OBJECTS)}`;
+    if (template === 4) return `${pick(SUBJECTS)} inside ${pick(OBJECTS)}`;
+    if (template === 5) return `${pick(SUBJECTS)} remembers ${pick(OBJECTS)}`;
+    if (template === 6) return `${pick(SUBJECTS)} arrives in reverse`;
+    if (template === 7) return `${pick(OBJECTS)}, ${pick(OBJECTS)}, ${pick(OBJECTS)}`;
+    if (template === 8) return `${pick(SUBJECTS)} made of ${pick(OBJECTS)}`;
+    if (template === 9) return `${pick(SUBJECTS)} wears ${pick(OBJECTS)}`;
+    if (template === 10) return `${pick(OBJECTS)} against perspective`;
+    if (template === 11) return `${pick(SUBJECTS)} inside quotation marks`;
+    if (template === 12) return `${pick(SUBJECTS)} ${pick(VERBS)} ${hybridWord()}`;
+    if (template === 13) return `${hybridWord()} without ${pick(OBJECTS)}`;
+    if (template === 14) return `${pick(ADJECTIVES)} ${hybridWord()}`;
+    if (template === 15) return `${hybridWord()}, ${pick(OBJECTS)}, ${pick(SUBJECTS)}`;
+    return `${pick(SUBJECTS)} inside ${hybridWord()}`;
   }
 
   function createParticle() {
@@ -93,32 +364,29 @@
     };
   }
 
-  function createNotes() {
-    const spacing = 5.4;
-    const cycle = fragments.length * spacing;
+  function createTextEvents() {
+    const fontSize = state.width < 520 ? 13 : 15;
+    state.textFont = `${fontSize}px ui-serif, Georgia, serif`;
+    ctx.font = state.textFont;
+    textEvents.length = 0;
 
-    notes.length = 0;
-    for (let index = 0; index < fragments.length; index += 1) {
-      notes.push({
-        text: fragments[index],
-        x: rand(0.18, 0.82),
-        y: rand(0.2, 0.68),
-        delay: index * spacing,
-        duration: 3.4,
-        cycle,
-        width: 0
+    for (let index = 0; index < TEXT_EVENT_COUNT; index += 1) {
+      const text = generateSentence();
+      textEvents.push({
+        text,
+        width: ctx.measureText(text).width,
+        x: rand(0.14, 0.86),
+        y: rand(0.16, 0.76),
+        wait: rand(4.5, 12.5),
+        fadeIn: rand(2.8, 5.2),
+        hold: rand(0.5, 2.4),
+        fadeOut: rand(3.4, 6.4),
+        alpha: rand(0.07, 0.14)
       });
     }
-  }
 
-  function updateTextMetrics() {
-    const size = state.width < 520 ? 16 : 19;
-    state.textFont = `${size}px ui-serif, Georgia, serif`;
-    ctx.font = state.textFont;
-
-    for (let index = 0; index < notes.length; index += 1) {
-      notes[index].width = ctx.measureText(notes[index].text).width;
-    }
+    state.textIndex = 0;
+    state.textElapsed = 0;
   }
 
   function targetParticleCount() {
@@ -134,62 +402,12 @@
     }
   }
 
-  function updateSettings() {
-    state.perception = Number(perceptionInput.value);
-    state.instability = easeInOut(state.perception / 2);
-    state.motionDepth = motionToggle.checked;
-    state.showText = textToggle.checked;
-    state.reducedMotion = reducedMotionQuery.matches;
-
-    const level = state.perception / 2;
-    let text = "stable";
-    if (level >= 0.72) {
-      text = "unstable";
-    } else if (level >= 0.34) {
-      text = "adaptive";
-    }
-    perceptionInput.setAttribute("aria-valuetext", text);
-  }
-
-  function setPerceptionValue(value) {
-    const min = Number(perceptionInput.min);
-    const max = Number(perceptionInput.max);
-    perceptionInput.value = clamp(value, min, max).toFixed(2);
-    updateSettings();
-  }
-
-  function onPerceptionKeydown(event) {
-    const step = Number(perceptionInput.step) || 0.01;
-    const value = Number(perceptionInput.value);
-    const min = Number(perceptionInput.min);
-    const max = Number(perceptionInput.max);
-    let next = value;
-
-    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
-      next = value - step;
-    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
-      next = value + step;
-    } else if (event.key === "PageDown") {
-      next = value - step * 10;
-    } else if (event.key === "PageUp") {
-      next = value + step * 10;
-    } else if (event.key === "Home") {
-      next = min;
-    } else if (event.key === "End") {
-      next = max;
-    } else {
-      return;
-    }
-
-    event.preventDefault();
-    setPerceptionValue(next);
-  }
-
   function resizeCanvas() {
     const nextWidth = Math.max(320, window.innerWidth);
     const nextHeight = Math.max(320, window.innerHeight);
     const nextDpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
 
+    state.resizeId = 0;
     state.width = nextWidth;
     state.height = nextHeight;
     state.dpr = state.reducedMotion ? 1 : nextDpr;
@@ -201,7 +419,7 @@
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
 
     rebuildParticles();
-    updateTextMetrics();
+    createTextEvents();
 
     canvas.dataset.particles = String(state.particleCount);
     canvas.dataset.dpr = String(state.dpr);
@@ -211,8 +429,8 @@
   }
 
   function scheduleResize() {
-    window.clearTimeout(state.resizeTimer);
-    state.resizeTimer = window.setTimeout(resizeCanvas, RESIZE_DELAY);
+    if (state.resizeId) return;
+    state.resizeId = window.requestAnimationFrame(resizeCanvas);
   }
 
   function setPointer(clientX, clientY, active) {
@@ -237,7 +455,7 @@
     ctx.fillRect(0, 0, state.width, state.height);
   }
 
-  function updateGaze(delta) {
+  function updateSystems(delta) {
     let targetX = state.pointerX;
     let targetY = state.pointerY;
 
@@ -257,9 +475,8 @@
   }
 
   function updateParticles(delta) {
-    const motion = state.motionDepth ? 1 : 0.16;
     const reduced = state.reducedMotion ? 0.15 : 1;
-    const drift = motion * reduced;
+    const drift = state.motionDepth ? reduced : reduced * 0.16;
     const follow = clamp((state.reducedMotion ? 0.004 : 0.012) * delta, 0, 0.08);
     const systemAParallax = state.motionDepth ? 0.12 : 0.035;
     const systemBParallax = state.motionDepth ? 0.17 : 0.05;
@@ -352,7 +569,7 @@
   }
 
   function drawSystemA() {
-    ctx.fillStyle = "#ededE6";
+    ctx.fillStyle = "#edede6";
 
     for (let index = 0; index < state.particleCount; index += 1) {
       const p = particles[index];
@@ -367,36 +584,43 @@
     ctx.globalAlpha = 1;
   }
 
-  function drawTextFragments() {
-    if (!state.showText) return;
+  function drawLanguage() {
+    const event = textEvents[state.textIndex];
+    if (!event) return;
+
+    let elapsed = state.textElapsed;
+    const visibleStart = event.wait;
+    const fadeInEnd = visibleStart + event.fadeIn;
+    const holdEnd = fadeInEnd + event.hold;
+    const fadeOutEnd = holdEnd + event.fadeOut;
+
+    while (elapsed > fadeOutEnd) {
+      elapsed -= fadeOutEnd;
+      state.textIndex = (state.textIndex + 1) % textEvents.length;
+      state.textElapsed = elapsed;
+      return;
+    }
+
+    if (elapsed < visibleStart) return;
+
+    let alpha = 0;
+    if (elapsed < fadeInEnd) {
+      alpha = easeInOut((elapsed - visibleStart) / event.fadeIn);
+    } else if (elapsed < holdEnd) {
+      alpha = 1;
+    } else {
+      alpha = easeInOut((fadeOutEnd - elapsed) / event.fadeOut);
+    }
+
+    const x = clamp(event.x * state.width, event.width / 2 + 20, state.width - event.width / 2 - 20);
+    const y = event.y * state.height;
 
     ctx.font = state.textFont;
     ctx.fillStyle = "#ecece6";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-
-    for (let index = 0; index < notes.length; index += 1) {
-      const note = notes[index];
-      let local = (state.time - note.delay) % note.cycle;
-      if (local < 0) local += note.cycle;
-      if (local > note.duration) continue;
-
-      const visible =
-        easeInOut(clamp(local / 1.35, 0, 1)) *
-        easeInOut(clamp((note.duration - local) / 1.45, 0, 1));
-      if (visible < 0.025) continue;
-
-      const x = clamp(
-        note.x * state.width + (state.systemBX - 0.5) * 14,
-        note.width / 2 + 18,
-        state.width - note.width / 2 - 18
-      );
-      const y = note.y * state.height + (state.systemBY - 0.5) * 10;
-
-      ctx.globalAlpha = visible * 0.12;
-      ctx.fillText(note.text, x, y);
-    }
-
+    ctx.globalAlpha = alpha * event.alpha;
+    ctx.fillText(event.text, x, y);
     ctx.globalAlpha = 1;
   }
 
@@ -407,7 +631,7 @@
     drawLines();
     drawOcclusion();
     drawSystemA();
-    drawTextFragments();
+    drawLanguage();
   }
 
   function drawFrame(now) {
@@ -422,15 +646,16 @@
 
     state.lastTime = now;
     state.time += (rawDelta / 1000) * timeScale;
+    state.textElapsed += rawDelta / 1000;
 
-    updateGaze(delta);
+    updateSystems(delta);
     updateParticles(delta);
     clearField();
     drawSystemB();
     drawLines();
     drawOcclusion();
     drawSystemA();
-    drawTextFragments();
+    drawLanguage();
 
     state.animationId = window.requestAnimationFrame(drawFrame);
   }
@@ -459,14 +684,9 @@
   }
 
   function onMotionPreferenceChange() {
-    updateSettings();
+    state.reducedMotion = reducedMotionQuery.matches;
     resizeCanvas();
   }
-
-  perceptionInput.addEventListener("input", updateSettings);
-  perceptionInput.addEventListener("keydown", onPerceptionKeydown);
-  motionToggle.addEventListener("change", updateSettings);
-  textToggle.addEventListener("change", updateSettings);
 
   if (typeof reducedMotionQuery.addEventListener === "function") {
     reducedMotionQuery.addEventListener("change", onMotionPreferenceChange);
@@ -486,8 +706,6 @@
   });
   document.addEventListener("visibilitychange", onVisibilityChange);
 
-  createNotes();
-  updateSettings();
   resizeCanvas();
   startAnimation();
 })();
