@@ -54,6 +54,9 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Confirmed the old fixed fragments are no longer present.
 - Confirmed the new multilingual word-bank fragments are present.
 - Scanned public files for terms from the earlier framing and found none remaining.
+- Pushed the multilingual Dada language-machine version to `main`.
+- Confirmed the public Pages URL returns HTTP `200`.
+- Confirmed a cache-busted Pages request for `main.js` returns the updated language-machine asset.
 
 ## Manual Tests To Do Next
 
