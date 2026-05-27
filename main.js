@@ -310,16 +310,76 @@
     return min + Math.random() * (max - min);
   }
 
+  function randomInt(min, max) {
+    return Math.floor(rand(min, max + 1));
+  }
+
   function pick(bank) {
     return bank[Math.floor(Math.random() * bank.length)];
   }
 
+  function duplicateVowel(word) {
+    const vowels = "aeiouáàâãéêíóõúyäö";
+
+    for (let attempt = 0; attempt < word.length; attempt += 1) {
+      const index = randomInt(0, word.length - 1);
+      const letter = word.charAt(index);
+
+      if (vowels.includes(letter.toLowerCase())) {
+        return `${word.slice(0, index)}${letter}${word.slice(index)}`;
+      }
+    }
+
+    return word;
+  }
+
   function hybridWord() {
-    return `${pick(HYBRID_LEFT)}${pick(HYBRID_RIGHT)}`;
+    let left = pick(HYBRID_LEFT);
+    let right = pick(HYBRID_RIGHT);
+
+    if (left.length > 4 && Math.random() < 0.3) {
+      left = left.slice(0, left.length - randomInt(1, Math.min(3, left.length - 3)));
+    }
+
+    if (right.length > 4 && Math.random() < 0.26) {
+      right = right.slice(randomInt(1, Math.min(2, right.length - 3)));
+    }
+
+    if (Math.random() < 0.28) {
+      if (Math.random() < 0.5) {
+        left = duplicateVowel(left);
+      } else {
+        right = duplicateVowel(right);
+      }
+    }
+
+    if (Math.random() < 0.24) {
+      if (left.length > 3 && Math.random() < 0.5) {
+        left = left.slice(0, -1);
+      } else if (right.length > 3) {
+        right = right.slice(1);
+      }
+    }
+
+    if (Math.random() < 0.24) {
+      if (left.length > 2 && Math.random() < 0.34) {
+        return `${left}${left.slice(-2)}${right}`;
+      }
+
+      if (right.length > 2 && Math.random() < 0.67) {
+        return `${left}${right.slice(0, 2)}${right}`;
+      }
+
+      if (left.length > 3 && right.length > 3) {
+        return `${left}${right.charAt(0)}${left.charAt(left.length - 1)}${right}`;
+      }
+    }
+
+    return `${left}${right}`;
   }
 
   function generateSentence() {
-    const template = Math.floor(Math.random() * 17);
+    const template = Math.floor(Math.random() * 24);
 
     if (template === 0) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)}`;
     if (template === 1) {
@@ -339,7 +399,34 @@
     if (template === 13) return `${hybridWord()} without ${pick(OBJECTS)}`;
     if (template === 14) return `${pick(ADJECTIVES)} ${hybridWord()}`;
     if (template === 15) return `${hybridWord()}, ${pick(OBJECTS)}, ${pick(SUBJECTS)}`;
-    return `${pick(SUBJECTS)} inside ${hybridWord()}`;
+    if (template === 16) return `${pick(SUBJECTS)} inside ${hybridWord()}`;
+    if (template === 17) return `${hybridWord()} ${hybridWord()}`;
+    if (template === 18) return `${pick(OBJECTS)} inside sideways`;
+    if (template === 19) return `${pick(VERBS)} without ${hybridWord()}`;
+    if (template === 20) return `${pick(SUBJECTS)}, ${pick(QUALIFIERS)}, ${hybridWord()}`;
+    if (template === 21) return `${pick(OBJECTS)} remembers ${pick(QUALIFIERS)}`;
+    if (template === 22) return `${pick(ADJECTIVES)} ${pick(VERBS)} ${pick(OBJECTS)}`;
+    return `${hybridWord()} against ${hybridWord()}`;
+  }
+
+  function randomTextWait() {
+    return Math.random() < 0.14 ? rand(30, 40) : rand(8, 24);
+  }
+
+  function randomTextX() {
+    if (Math.random() < 0.68) {
+      return Math.random() < 0.5 ? rand(0.12, 0.38) : rand(0.62, 0.88);
+    }
+
+    return rand(0.16, 0.84);
+  }
+
+  function randomTextY() {
+    if (Math.random() < 0.58) {
+      return Math.random() < 0.5 ? rand(0.15, 0.36) : rand(0.62, 0.8);
+    }
+
+    return rand(0.18, 0.78);
   }
 
   function createParticle() {
@@ -365,7 +452,7 @@
   }
 
   function createTextEvents() {
-    const fontSize = state.width < 520 ? 13 : 15;
+    const fontSize = state.width < 520 ? 12 : 13;
     state.textFont = `${fontSize}px ui-serif, Georgia, serif`;
     ctx.font = state.textFont;
     textEvents.length = 0;
@@ -375,13 +462,13 @@
       textEvents.push({
         text,
         width: ctx.measureText(text).width,
-        x: rand(0.14, 0.86),
-        y: rand(0.16, 0.76),
-        wait: rand(4.5, 12.5),
-        fadeIn: rand(2.8, 5.2),
-        hold: rand(0.5, 2.4),
-        fadeOut: rand(3.4, 6.4),
-        alpha: rand(0.07, 0.14)
+        x: randomTextX(),
+        y: randomTextY(),
+        wait: randomTextWait(),
+        fadeIn: rand(4.8, 8.2),
+        hold: rand(0.2, 1.5),
+        fadeOut: rand(5.8, 9.8),
+        alpha: rand(0.045, 0.095)
       });
     }
 

@@ -9,6 +9,10 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Added mixed English, Portuguese, Galician, and Finnish word banks for subjects, verbs, objects, qualifiers, and adjectives.
 - Added a hybrid word generator that combines fragments across languages.
 - Added template-based sentence generation with languages intentionally colliding rather than separating or translating.
+- Added a final Dada refinement pass with rarer text, broken sentence templates, and less grammatically clean language.
+- Increased silence between text events to `8`-`24` seconds, with occasional `30`-`40` second gaps.
+- Made hybrid words less clean through truncation, vowel duplication, missing seam letters, and awkward overlaps.
+- Made text smaller, dimmer, slower to fade, and less likely to appear near the exact center.
 - Pre-generates text events from the language machine so the animation loop only fades one sentence at a time.
 - Enforces a maximum of one visible sentence at a time.
 - Added long empty pauses, random text positions, low opacity, slow fade-in, and slow fade-out.
@@ -53,8 +57,12 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Confirmed the code includes `requestAnimationFrame`, `cancelAnimationFrame`, `document.hidden`, `visibilitychange`, capped `devicePixelRatio`, and particle-count constants.
 - Confirmed the old fixed fragments are no longer present.
 - Confirmed the new multilingual word-bank fragments are present.
+- Confirmed the final Dada templates and longer silence range are present.
+- Confirmed the local browser loads the page with `particles: "60"`, `dpr: "1.5"`, `safeMode: "true"`, and `0` visible controls.
+- Captured a local browser screenshot confirming the dark minimal particle field renders.
 - Scanned public files for terms from the earlier framing and found none remaining.
 - Pushed the multilingual Dada language-machine version to `main`.
+- Pushed the final Dada refinement pass to `main`.
 - Confirmed the public Pages URL returns HTTP `200`.
 - Confirmed a cache-busted Pages request for `main.js` returns the updated language-machine asset.
 
@@ -66,7 +74,8 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Watch CPU/GPU in DevTools Performance Monitor or Activity Monitor while moving the pointer.
 - Confirm there is no visible UI panel.
 - Wait through several language cycles and confirm no more than one sentence is visible at a time.
-- Confirm empty pauses occur between text appearances.
+- Confirm most text pauses last `8`-`24` seconds and that occasional pauses can last `30`-`40` seconds.
+- Confirm hybrid words sometimes look truncated, vowel-doubled, seam-damaged, or awkwardly overlapped.
 - Resize the window repeatedly and confirm the page does not freeze.
 - Switch away from the tab for at least `10` seconds and confirm CPU drops while hidden.
 - Return to the tab and confirm animation resumes without a jump.
