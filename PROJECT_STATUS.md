@@ -1,7 +1,5 @@
 # Project Status
 
-Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagomartinspinto.github.io/MonocularDepth/)
-
 ## Completed
 
 - Built a static HTML/CSS/JS artwork with one fullscreen canvas.
@@ -11,6 +9,7 @@ Public URL: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagom
 - Removed visible controls so the artwork remains an uninterrupted field.
 - Added a rare multilingual Dada language layer with one sentence maximum on screen.
 - Updated the meta description for the final public polish pass.
+- Kept deployment references generic in the visible documentation.
 
 ## Files
 

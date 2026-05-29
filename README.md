@@ -4,7 +4,7 @@ Monocular Depth is a browser-based artwork where space, language, and perception
 
 The piece opens into a fullscreen dark field of slow particles. Depth emerges through motion, scale, opacity, parallax, and occlusion. A rare multilingual Dada sentence may appear, then fade back into silence.
 
-Public version: [https://tiagomartinspinto.github.io/MonocularDepth/](https://tiagomartinspinto.github.io/MonocularDepth/)
+Deployed with GitHub Pages.
 
 ## Performance
 
