@@ -10,6 +10,7 @@
 - Added a rare multilingual Dada language layer with one sentence maximum on screen.
 - Updated the meta description for the final public polish pass.
 - Kept deployment references generic in the visible documentation.
+- Simplified README into a short public-facing artwork note.
 
 ## Files
 
