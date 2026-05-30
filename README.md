@@ -6,7 +6,7 @@ A dark field opens.
 
 Depth appears through motion, scale, opacity, parallax, and occlusion.
 
-Sometimes language surfaces.
+Sometimes a sentence surfaces.
 
 Then it disappears again.
 

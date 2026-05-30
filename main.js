@@ -13,255 +13,98 @@
   const TAU = Math.PI * 2;
 
   const SUBJECTS = [
-    "the staircase",
-    "a escada",
-    "a escaleira",
-    "portaikko",
-    "the wall",
-    "a parede",
-    "seinä",
     "the room",
-    "a sala",
-    "a habitación",
-    "huone",
-    "the horizon",
-    "o horizonte",
-    "horisontti",
-    "the corridor",
-    "o corredor",
-    "käytävä",
+    "the wall",
     "the image",
-    "a imagem",
-    "a imaxe",
-    "kuva",
-    "the shadow",
-    "a sombra",
-    "varjo",
-    "the surface",
-    "a superfície",
-    "pinta",
     "the window",
-    "a janela",
-    "a fiestra",
-    "ikkuna",
     "the floor",
-    "o chão",
-    "o chan",
-    "lattia",
     "the corner",
-    "o canto",
-    "o recuncho",
-    "kulma",
+    "the horizon",
+    "the surface",
+    "the shadow",
+    "the distance",
     "the memory",
-    "a memória",
-    "a memoria",
-    "muisti",
     "the map",
-    "o mapa",
-    "kartta",
     "the object",
-    "o objeto",
-    "o obxecto",
-    "esine",
-    "the weather",
-    "o tempo",
-    "sää"
+    "the eye",
+    "the other eye",
+    "the blind spot",
+    "the edge",
+    "the field"
   ];
 
   const VERBS = [
-    "forgot",
-    "esqueceu",
-    "unohti",
-    "borrowed",
-    "emprestou",
-    "lainasi",
-    "folded",
-    "dobrou",
-    "taittoi",
-    "misplaced",
-    "perdeu",
-    "kadotti",
-    "refused",
-    "recusou",
-    "rexeitou",
-    "kieltäytyi",
-    "swallowed",
-    "engoliu",
-    "tragou",
-    "nielaisi",
-    "rearranged",
-    "reorganizou",
-    "reordenou",
-    "järjesti",
-    "delayed",
-    "atrasou",
-    "viivästytti",
-    "translated",
-    "traduziu",
-    "traduciu",
-    "käänsi",
-    "interrupted",
-    "interrompeu",
-    "keskeytti",
-    "removed",
-    "removeu",
-    "poisti",
-    "invented",
-    "inventou",
-    "keksi",
-    "rotated",
-    "rodou",
-    "kiersi"
+    "forgets",
+    "delays",
+    "misplaces",
+    "refuses",
+    "measures",
+    "invents",
+    "repeats",
+    "folds",
+    "loses",
+    "shifts",
+    "returns",
+    "disappears",
+    "hesitates",
+    "remembers",
+    "interrupts",
+    "reverses"
   ];
 
   const OBJECTS = [
     "the horizon",
-    "o horizonte",
-    "horisontti",
-    "tomorrow",
-    "amanhã",
-    "mañá",
-    "huomenna",
-    "silence",
-    "silêncio",
-    "silencio",
-    "hiljaisuus",
-    "distance",
-    "distância",
-    "distancia",
-    "etäisyys",
-    "weather",
-    "tempo",
-    "sää",
-    "memory",
-    "memória",
-    "memoria",
-    "muisti",
-    "the image",
-    "a imagem",
-    "a imaxe",
-    "kuva",
     "the room",
-    "a sala",
-    "huone",
+    "the image",
     "the shadow",
-    "a sombra",
-    "varjo",
-    "geometry",
-    "geometria",
-    "geometría",
-    "surface",
-    "superfície",
-    "superficie",
-    "pinta",
-    "perspective",
-    "perspetiva",
-    "perspectiva"
+    "the surface",
+    "the distance",
+    "the floor",
+    "the window",
+    "the corner",
+    "the map",
+    "the object",
+    "the eye",
+    "the blind spot",
+    "the edge",
+    "the field",
+    "tomorrow",
+    "silence",
+    "depth",
+    "perspective"
   ];
 
   const QUALIFIERS = [
     "without permission",
-    "sem permissão",
-    "sen permiso",
-    "ilman lupaa",
-    "sideways",
-    "de lado",
-    "sivuttain",
     "in silence",
-    "em silêncio",
-    "en silencio",
-    "hiljaa",
     "by mistake",
-    "por engano",
-    "vahingossa",
     "inside the wall",
-    "dentro da parede",
-    "seinän sisällä",
-    "for no reason",
-    "sem razão",
-    "sen razón",
-    "ilman syytä",
     "near the horizon",
-    "junto ao horizonte",
-    "horisontin lähellä",
-    "against perspective"
+    "against perspective",
+    "out of alignment",
+    "at the edge",
+    "behind the image",
+    "without depth",
+    "almost in focus",
+    "slightly aside"
   ];
 
   const ADJECTIVES = [
     "unfinished",
-    "inacabado",
-    "keskeneräinen",
     "borrowed",
-    "emprestado",
-    "lainattu",
     "slow",
-    "lento",
-    "hidas",
-    "sideways",
-    "oblíquo",
-    "oblicuo",
-    "vino",
     "misplaced",
-    "perdido",
-    "kadonnut",
     "silent",
-    "silencioso",
-    "hiljainen",
     "accidental",
-    "acidental",
-    "satunnainen",
     "folded",
-    "dobrado",
-    "taitettu",
     "soft",
-    "suave",
-    "pehmeä"
-  ];
-
-  const HYBRID_LEFT = [
-    "hori",
-    "sombra",
-    "muisti",
-    "pinta",
-    "escada",
-    "silenç",
-    "varjo",
-    "dobra",
-    "lattia",
-    "recuncho",
-    "kuva",
-    "etä",
-    "janela",
-    "huone",
-    "kartta",
-    "porta",
-    "sein",
-    "tempo",
-    "obxecto",
-    "fiestra"
-  ];
-
-  const HYBRID_RIGHT = [
-    "seinä",
-    "space",
-    "distance",
-    "wall",
-    "ikko",
-    "aisuus",
-    "horizonte",
-    "motion",
-    "memory",
-    "sombra",
-    "distância",
-    "ikkuna",
-    "horizon",
-    "perspectiva",
-    "huone",
-    "geometria",
-    "pinta",
-    "varjo",
-    "mapa",
-    "kulma"
+    "distant",
+    "partial",
+    "unstable",
+    "shallow",
+    "hidden",
+    "reversed",
+    "almost visible"
   ];
 
   const particles = [];
@@ -310,76 +153,12 @@
     return min + Math.random() * (max - min);
   }
 
-  function randomInt(min, max) {
-    return Math.floor(rand(min, max + 1));
-  }
-
   function pick(bank) {
     return bank[Math.floor(Math.random() * bank.length)];
   }
 
-  function duplicateVowel(word) {
-    const vowels = "aeiouáàâãéêíóõúyäö";
-
-    for (let attempt = 0; attempt < word.length; attempt += 1) {
-      const index = randomInt(0, word.length - 1);
-      const letter = word.charAt(index);
-
-      if (vowels.includes(letter.toLowerCase())) {
-        return `${word.slice(0, index)}${letter}${word.slice(index)}`;
-      }
-    }
-
-    return word;
-  }
-
-  function hybridWord() {
-    let left = pick(HYBRID_LEFT);
-    let right = pick(HYBRID_RIGHT);
-
-    if (left.length > 4 && Math.random() < 0.3) {
-      left = left.slice(0, left.length - randomInt(1, Math.min(3, left.length - 3)));
-    }
-
-    if (right.length > 4 && Math.random() < 0.26) {
-      right = right.slice(randomInt(1, Math.min(2, right.length - 3)));
-    }
-
-    if (Math.random() < 0.28) {
-      if (Math.random() < 0.5) {
-        left = duplicateVowel(left);
-      } else {
-        right = duplicateVowel(right);
-      }
-    }
-
-    if (Math.random() < 0.24) {
-      if (left.length > 3 && Math.random() < 0.5) {
-        left = left.slice(0, -1);
-      } else if (right.length > 3) {
-        right = right.slice(1);
-      }
-    }
-
-    if (Math.random() < 0.24) {
-      if (left.length > 2 && Math.random() < 0.34) {
-        return `${left}${left.slice(-2)}${right}`;
-      }
-
-      if (right.length > 2 && Math.random() < 0.67) {
-        return `${left}${right.slice(0, 2)}${right}`;
-      }
-
-      if (left.length > 3 && right.length > 3) {
-        return `${left}${right.charAt(0)}${left.charAt(left.length - 1)}${right}`;
-      }
-    }
-
-    return `${left}${right}`;
-  }
-
   function generateSentence() {
-    const template = Math.floor(Math.random() * 24);
+    const template = Math.floor(Math.random() * 12);
 
     if (template === 0) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)}`;
     if (template === 1) {
@@ -390,23 +169,11 @@
     if (template === 4) return `${pick(SUBJECTS)} inside ${pick(OBJECTS)}`;
     if (template === 5) return `${pick(SUBJECTS)} remembers ${pick(OBJECTS)}`;
     if (template === 6) return `${pick(SUBJECTS)} arrives in reverse`;
-    if (template === 7) return `${pick(OBJECTS)}, ${pick(OBJECTS)}, ${pick(OBJECTS)}`;
-    if (template === 8) return `${pick(SUBJECTS)} made of ${pick(OBJECTS)}`;
-    if (template === 9) return `${pick(SUBJECTS)} wears ${pick(OBJECTS)}`;
-    if (template === 10) return `${pick(OBJECTS)} against perspective`;
-    if (template === 11) return `${pick(SUBJECTS)} inside quotation marks`;
-    if (template === 12) return `${pick(SUBJECTS)} ${pick(VERBS)} ${hybridWord()}`;
-    if (template === 13) return `${hybridWord()} without ${pick(OBJECTS)}`;
-    if (template === 14) return `${pick(ADJECTIVES)} ${hybridWord()}`;
-    if (template === 15) return `${hybridWord()}, ${pick(OBJECTS)}, ${pick(SUBJECTS)}`;
-    if (template === 16) return `${pick(SUBJECTS)} inside ${hybridWord()}`;
-    if (template === 17) return `${hybridWord()} ${hybridWord()}`;
-    if (template === 18) return `${pick(OBJECTS)} inside sideways`;
-    if (template === 19) return `${pick(VERBS)} without ${hybridWord()}`;
-    if (template === 20) return `${pick(SUBJECTS)}, ${pick(QUALIFIERS)}, ${hybridWord()}`;
-    if (template === 21) return `${pick(OBJECTS)} remembers ${pick(QUALIFIERS)}`;
-    if (template === 22) return `${pick(ADJECTIVES)} ${pick(VERBS)} ${pick(OBJECTS)}`;
-    return `${hybridWord()} against ${hybridWord()}`;
+    if (template === 7) return `${pick(OBJECTS)} against perspective`;
+    if (template === 8) return `${pick(SUBJECTS)} inside quotation marks`;
+    if (template === 9) return `${pick(OBJECTS)} almost in focus`;
+    if (template === 10) return `${pick(SUBJECTS)} without depth`;
+    return `${pick(OBJECTS)} at the edge of ${pick(OBJECTS)}`;
   }
 
   function randomTextWait() {
