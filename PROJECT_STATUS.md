@@ -13,6 +13,8 @@
 - Simplified the text system to English-only word banks and templates.
 - Tightened the sentence layer toward quieter perceptual language.
 - Added a rare English-language sentence layer with one sentence maximum on screen.
+- Created exhibition note for curatorial, wall-text, and installation use.
+- Museum/public polish pass completed.
 - Updated the meta description for the final public polish pass.
 - Kept deployment references generic in the visible documentation.
 - Simplified README into a short public-facing artwork note.
@@ -23,6 +25,7 @@
 - `styles.css`
 - `main.js`
 - `README.md`
+- `EXHIBITION_NOTE.md`
 - `PROJECT_STATUS.md`
 
 ## Known Issues
