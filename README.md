@@ -1,14 +1,16 @@
 # Monocular Depth
 
-Monocular Depth is a browser-based artwork where space, language, and perception drift out of alignment.
+Monocular Depth is a browser-based artwork about constructing depth without relying on stereoscopic vision.
 
-A dark field opens.
+A flat image tries to become spatial.
 
-Depth appears through motion, scale, opacity, parallax, and occlusion.
+Depth appears through motion, scale, opacity, occlusion, and unstable perspective.
 
 Sometimes a sentence surfaces.
 
 Then it disappears again.
+
+The work draws from amblyopia and reduced stereoscopic perception, but does not illustrate them directly. It treats adaptation as a perceptual method.
 
 Deployed with GitHub Pages.
 

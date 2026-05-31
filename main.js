@@ -37,7 +37,6 @@
     "forgets",
     "delays",
     "misplaces",
-    "refuses",
     "measures",
     "invents",
     "repeats",
@@ -68,16 +67,13 @@
     "the blind spot",
     "the edge",
     "the field",
-    "tomorrow",
     "silence",
     "depth",
     "perspective"
   ];
 
   const QUALIFIERS = [
-    "without permission",
     "in silence",
-    "by mistake",
     "inside the wall",
     "near the horizon",
     "against perspective",
@@ -170,7 +166,7 @@
     if (template === 5) return `${pick(SUBJECTS)} remembers ${pick(OBJECTS)}`;
     if (template === 6) return `${pick(SUBJECTS)} arrives in reverse`;
     if (template === 7) return `${pick(OBJECTS)} against perspective`;
-    if (template === 8) return `${pick(SUBJECTS)} inside quotation marks`;
+    if (template === 8) return `${pick(SUBJECTS)} almost remembers perspective`;
     if (template === 9) return `${pick(OBJECTS)} almost in focus`;
     if (template === 10) return `${pick(SUBJECTS)} without depth`;
     return `${pick(OBJECTS)} at the edge of ${pick(OBJECTS)}`;
@@ -197,19 +193,33 @@
   }
 
   function createParticle() {
-    const depth = Math.pow(rand(0.04, 1), 1.35);
+    const depth = Math.pow(rand(0.04, 1), 1.48);
+    const plane = Math.floor(rand(0, 5));
+    const horizonPull = 1 - depth;
+    const planeY = 0.23 + plane * 0.13 + rand(-0.032, 0.032);
+    const baseX = lerp(
+      0.5 + rand(-0.2, 0.2) * horizonPull,
+      rand(0.07, 0.93),
+      0.42 + depth * 0.48
+    );
+    const baseY = clamp(
+      lerp(0.48 + rand(-0.045, 0.045) * horizonPull, planeY, 0.48 + depth * 0.45),
+      0.08,
+      0.92
+    );
 
     return {
-      baseX: rand(0.06, 0.94),
-      baseY: rand(0.07, 0.93),
-      x: rand(0.06, 0.94),
-      y: rand(0.07, 0.93),
+      baseX,
+      baseY,
+      x: baseX + rand(-0.018, 0.018),
+      y: baseY + rand(-0.018, 0.018),
       depth,
+      plane,
       phase: rand(0, TAU),
-      speed: lerp(0.035, 0.13, depth),
-      radius: lerp(0.72, 2.35, depth),
-      driftX: rand(0.009, 0.034) * depth,
-      driftY: rand(0.008, 0.028) * depth,
+      speed: lerp(0.022, 0.085, depth),
+      radius: lerp(0.58, 2.12, depth),
+      driftX: rand(0.006, 0.024) * lerp(0.35, 1, depth),
+      driftY: rand(0.004, 0.018) * lerp(0.3, 0.9, depth),
       lineBias: Math.random(),
       x1: 0,
       y1: 0,
@@ -364,9 +374,9 @@
   }
 
   function drawLines() {
-    const maxDistance = state.reducedMotion ? 92 : 112;
+    const maxDistance = state.reducedMotion ? 96 : 128;
     const maxDistanceSq = maxDistance * maxDistance;
-    const lineLimit = state.reducedMotion ? 6 : 14;
+    const lineLimit = state.reducedMotion ? 6 : 12;
     const vanishX = state.width * (0.5 + (state.systemAX - 0.5) * 0.18);
     const vanishY = state.height * (0.52 + (state.systemAY - 0.5) * 0.12);
     let lineCount = 0;
@@ -382,6 +392,8 @@
         if (((i * 17 + j * 31) % 9) !== 0) continue;
 
         const b = particles[j];
+        if (a.plane !== b.plane) continue;
+
         const depthGap = Math.abs(a.depth - b.depth);
         if (depthGap > 0.24) continue;
 
@@ -392,10 +404,10 @@
 
         const seed = i * 12.9898 + j * 78.233;
         const pulse = (Math.sin(state.time * 0.24 + seed) + 1) * 0.5;
-        if (pulse < 0.55) continue;
+        if (pulse < 0.48) continue;
 
         const depth = (a.depth + b.depth) * 0.5;
-        const fade = easeInOut((pulse - 0.55) / 0.45);
+        const fade = easeInOut((pulse - 0.48) / 0.52);
         const distanceFade = 1 - distanceSq / maxDistanceSq;
         const perspectivePull = lerp(0.018, 0.055, 1 - depth);
         const ax = lerp(a.x1, vanishX, perspectivePull);
@@ -404,7 +416,7 @@
         const by = lerp(b.y1, vanishY, perspectivePull);
         const shift = Math.sin(seed * 0.37) * 0.035;
 
-        ctx.globalAlpha = fade * distanceFade * lerp(0.012, 0.042, depth);
+        ctx.globalAlpha = fade * distanceFade * lerp(0.012, 0.044, depth);
         ctx.beginPath();
         addBrokenSegment(ax, ay, bx, by, 0.08, 0.28 + shift);
         addBrokenSegment(ax, ay, bx, by, 0.46 - shift, 0.68);
