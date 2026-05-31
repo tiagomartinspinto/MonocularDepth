@@ -358,34 +358,67 @@
     }
   }
 
-  function drawLines() {
-    const maxDistance = 84;
-    const maxDistanceSq = maxDistance * maxDistance;
+  function addBrokenSegment(x1, y1, x2, y2, start, end) {
+    ctx.moveTo(lerp(x1, x2, start), lerp(y1, y2, start));
+    ctx.lineTo(lerp(x1, x2, end), lerp(y1, y2, end));
+  }
 
-    ctx.beginPath();
+  function drawLines() {
+    const maxDistance = state.reducedMotion ? 92 : 112;
+    const maxDistanceSq = maxDistance * maxDistance;
+    const lineLimit = state.reducedMotion ? 6 : 14;
+    const vanishX = state.width * (0.5 + (state.systemAX - 0.5) * 0.18);
+    const vanishY = state.height * (0.52 + (state.systemAY - 0.5) * 0.12);
+    let lineCount = 0;
+
+    ctx.strokeStyle = "#d8d8cf";
+    ctx.lineWidth = 0.45;
+
     for (let i = 0; i < state.particleCount; i += 1) {
       const a = particles[i];
-      if (a.lineBias < 0.28) continue;
+      if (a.lineBias < 0.56) continue;
 
       for (let j = i + 1; j < state.particleCount; j += 1) {
-        if (((i + j) & 1) === 1) continue;
+        if (((i * 17 + j * 31) % 9) !== 0) continue;
 
         const b = particles[j];
-        if (Math.abs(a.depth - b.depth) > 0.18) continue;
+        const depthGap = Math.abs(a.depth - b.depth);
+        if (depthGap > 0.24) continue;
 
         const dx = a.x1 - b.x1;
         const dy = a.y1 - b.y1;
-        if (dx * dx + dy * dy > maxDistanceSq) continue;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq > maxDistanceSq) continue;
 
-        ctx.moveTo(a.x1, a.y1);
-        ctx.lineTo(b.x1, b.y1);
+        const seed = i * 12.9898 + j * 78.233;
+        const pulse = (Math.sin(state.time * 0.24 + seed) + 1) * 0.5;
+        if (pulse < 0.55) continue;
+
+        const depth = (a.depth + b.depth) * 0.5;
+        const fade = easeInOut((pulse - 0.55) / 0.45);
+        const distanceFade = 1 - distanceSq / maxDistanceSq;
+        const perspectivePull = lerp(0.018, 0.055, 1 - depth);
+        const ax = lerp(a.x1, vanishX, perspectivePull);
+        const ay = lerp(a.y1, vanishY, perspectivePull);
+        const bx = lerp(b.x1, vanishX, perspectivePull);
+        const by = lerp(b.y1, vanishY, perspectivePull);
+        const shift = Math.sin(seed * 0.37) * 0.035;
+
+        ctx.globalAlpha = fade * distanceFade * lerp(0.012, 0.042, depth);
+        ctx.beginPath();
+        addBrokenSegment(ax, ay, bx, by, 0.08, 0.28 + shift);
+        addBrokenSegment(ax, ay, bx, by, 0.46 - shift, 0.68);
+        if (depth > 0.52) addBrokenSegment(ax, ay, bx, by, 0.78, 0.92);
+        ctx.stroke();
+
+        lineCount += 1;
+        if (lineCount >= lineLimit) {
+          ctx.globalAlpha = 1;
+          return;
+        }
       }
     }
 
-    ctx.globalAlpha = 0.06;
-    ctx.strokeStyle = "#d8d8cf";
-    ctx.lineWidth = 0.55;
-    ctx.stroke();
     ctx.globalAlpha = 1;
   }
 

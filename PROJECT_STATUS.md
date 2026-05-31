@@ -7,6 +7,7 @@
 - Avoided blur filters, canvas shadows, particle glow, analytics, tracking, npm, and build steps.
 - Added pause-on-hidden-tab behavior and reduced-motion handling.
 - Removed visible controls so the artwork remains an uninterrupted field.
+- Added a sparse broken depth-line layer between nearby particles.
 - Simplified the text system to English-only word banks and templates.
 - Added a rare English-language sentence layer with one sentence maximum on screen.
 - Updated the meta description for the final public polish pass.
