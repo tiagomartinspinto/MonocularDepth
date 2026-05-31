@@ -25,5 +25,3 @@ Open `http://localhost:8000`.
 The work runs entirely in the browser.
 
 There is no backend, no analytics, no tracking, and no build process.
-
-GitHub Pages can serve the repository root directly.
