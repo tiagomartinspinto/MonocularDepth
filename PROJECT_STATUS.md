@@ -17,6 +17,9 @@
 - Added a rare English-language sentence layer with one sentence maximum on screen.
 - Created exhibition note for curatorial, wall-text, and installation use.
 - Museum/public polish pass completed.
+- Light-background museum test pass added.
+- Shifted to an off-white field with dark particles, dark text, and subtle dark perspective lines.
+- Added subtle non-uniform softness zones without illustrative or condition-specific framing.
 - Updated the meta description for the final public polish pass.
 - Kept deployment references generic in the visible documentation.
 - Simplified README into a short public-facing artwork note.

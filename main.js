@@ -11,6 +11,18 @@
   const MAX_DPR = 1.5;
   const TEXT_EVENT_COUNT = 96;
   const TAU = Math.PI * 2;
+  const FIELD_COLOR = "#f3f0e8";
+  const MARK_COLOR = "#181816";
+  const SECONDARY_MARK_COLOR = "#343430";
+  const LINE_COLOR = "#4d4d47";
+  const SOFT_ZONE_COUNT = 4;
+
+  const softZones = [
+    { x: 0.22, y: 0.34, radius: 0.24, phase: 0.4, driftX: 0.032, driftY: 0.026 },
+    { x: 0.66, y: 0.28, radius: 0.2, phase: 2.1, driftX: 0.025, driftY: 0.02 },
+    { x: 0.48, y: 0.58, radius: 0.28, phase: 3.7, driftX: 0.03, driftY: 0.024 },
+    { x: 0.78, y: 0.68, radius: 0.22, phase: 5.2, driftX: 0.024, driftY: 0.03 }
+  ];
 
   const SUBJECTS = [
     "the room",
@@ -148,6 +160,28 @@
 
   function pick(bank) {
     return bank[Math.floor(Math.random() * bank.length)];
+  }
+
+  function softnessAt(x, y) {
+    let softness = 0;
+
+    for (let index = 0; index < SOFT_ZONE_COUNT; index += 1) {
+      const zone = softZones[index];
+      const zoneX =
+        (zone.x + Math.cos(state.time * 0.021 + zone.phase) * zone.driftX) * state.width;
+      const zoneY =
+        (zone.y + Math.sin(state.time * 0.017 + zone.phase * 1.3) * zone.driftY) * state.height;
+      const radius = zone.radius * Math.min(state.width, state.height);
+      const dx = x - zoneX;
+      const dy = y - zoneY;
+      const distance = Math.sqrt(dx * dx + dy * dy) / radius;
+
+      if (distance < 1) {
+        softness = Math.max(softness, easeInOut(1 - distance));
+      }
+    }
+
+    return softness;
   }
 
   function generateSentence() {
@@ -296,7 +330,7 @@
 
   function clearField() {
     ctx.globalAlpha = 1;
-    ctx.fillStyle = "#050506";
+    ctx.fillStyle = FIELD_COLOR;
     ctx.fillRect(0, 0, state.width, state.height);
   }
 
@@ -365,7 +399,7 @@
     const vanishY = state.height * (0.52 + (state.systemAY - 0.5) * 0.12);
     let lineCount = 0;
 
-    ctx.strokeStyle = "#d8d8cf";
+    ctx.strokeStyle = LINE_COLOR;
     ctx.lineWidth = 0.45;
 
     for (let i = 0; i < state.particleCount; i += 1) {
@@ -398,14 +432,24 @@
         const ay = lerp(a.y1, vanishY, perspectivePull);
         const bx = lerp(b.x1, vanishX, perspectivePull);
         const by = lerp(b.y1, vanishY, perspectivePull);
+        const softness = softnessAt((ax + bx) * 0.5, (ay + by) * 0.5);
         const shift = Math.sin(seed * 0.37) * 0.035;
 
-        ctx.globalAlpha = fade * distanceFade * lerp(0.012, 0.044, depth);
+        ctx.lineWidth = lerp(0.42, 0.68, softness);
+        ctx.globalAlpha = fade * distanceFade * lerp(0.018, 0.06, depth) * (1 - softness * 0.55);
         ctx.beginPath();
         addBrokenSegment(ax, ay, bx, by, 0.08, 0.28 + shift);
         addBrokenSegment(ax, ay, bx, by, 0.46 - shift, 0.68);
         if (depth > 0.52) addBrokenSegment(ax, ay, bx, by, 0.78, 0.92);
         ctx.stroke();
+
+        if (softness > 0.38) {
+          ctx.globalAlpha *= 0.38;
+          ctx.beginPath();
+          addBrokenSegment(ax + 0.7, ay - 0.5, bx + 0.7, by - 0.5, 0.12, 0.3 + shift);
+          addBrokenSegment(ax - 0.6, ay + 0.4, bx - 0.6, by + 0.4, 0.5 - shift, 0.66);
+          ctx.stroke();
+        }
 
         lineCount += 1;
         if (lineCount >= lineLimit) {
@@ -419,16 +463,17 @@
   }
 
   function drawSystemB() {
-    ctx.fillStyle = "#cbcbc3";
+    ctx.fillStyle = SECONDARY_MARK_COLOR;
 
     for (let index = 0; index < state.particleCount; index += 1) {
       const p = particles[index];
       const unstable = 0.58 + Math.sin(state.time * 0.45 + p.phase) * 0.18;
-      const alpha = (0.055 + state.instability * 0.03) * unstable;
+      const softness = softnessAt(p.x2, p.y2);
+      const alpha = (0.05 + state.instability * 0.026) * unstable * (1 - softness * 0.5);
 
-      ctx.globalAlpha = clamp(alpha, 0.02, 0.12);
+      ctx.globalAlpha = clamp(alpha, 0.014, 0.1);
       ctx.beginPath();
-      ctx.arc(p.x2, p.y2, p.radius * lerp(1.15, 1.5, p.depth), 0, TAU);
+      ctx.arc(p.x2, p.y2, p.radius * lerp(1.15, 1.5 + softness * 0.55, p.depth), 0, TAU);
       ctx.fill();
     }
 
@@ -436,13 +481,13 @@
   }
 
   function drawOcclusion() {
-    ctx.fillStyle = "#050506";
+    ctx.fillStyle = FIELD_COLOR;
 
     for (let index = 0; index < state.particleCount; index += 1) {
       const p = particles[index];
       if (p.depth < 0.78 || p.lineBias < 0.42) continue;
 
-      ctx.globalAlpha = 0.035;
+      ctx.globalAlpha = 0.045;
       ctx.beginPath();
       ctx.arc(p.x1, p.y1, p.radius * 5.2, 0, TAU);
       ctx.fill();
@@ -452,16 +497,24 @@
   }
 
   function drawSystemA() {
-    ctx.fillStyle = "#edede6";
+    ctx.fillStyle = MARK_COLOR;
 
     for (let index = 0; index < state.particleCount; index += 1) {
       const p = particles[index];
-      const radius = p.radius * lerp(0.82, 1.32, p.depth);
+      const softness = softnessAt(p.x1, p.y1);
+      const radius = p.radius * lerp(0.82, 1.32 + softness * 0.54, p.depth);
 
-      ctx.globalAlpha = lerp(0.14, 0.36, p.depth);
+      ctx.globalAlpha = lerp(0.16, 0.44, p.depth) * (1 - softness * 0.38);
       ctx.beginPath();
       ctx.arc(p.x1, p.y1, radius, 0, TAU);
       ctx.fill();
+
+      if (softness > 0.42) {
+        ctx.globalAlpha *= 0.32;
+        ctx.beginPath();
+        ctx.arc(p.x1 + 0.8, p.y1 - 0.45, radius * 1.42, 0, TAU);
+        ctx.fill();
+      }
     }
 
     ctx.globalAlpha = 1;
@@ -499,7 +552,7 @@
     const y = event.y * state.height;
 
     ctx.font = state.textFont;
-    ctx.fillStyle = "#ecece6";
+    ctx.fillStyle = MARK_COLOR;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.globalAlpha = alpha * event.alpha;
