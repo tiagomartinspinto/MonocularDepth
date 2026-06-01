@@ -115,9 +115,6 @@
     animationId: 0,
     resizeId: 0,
     particleCount: 0,
-    pointerActive: false,
-    pointerX: 0.5,
-    pointerY: 0.5,
     systemAX: 0.5,
     systemAY: 0.5,
     systemBX: 0.5,
@@ -297,22 +294,6 @@
     state.resizeId = window.requestAnimationFrame(resizeCanvas);
   }
 
-  function setPointer(clientX, clientY, active) {
-    state.pointerX = clamp(clientX / state.width, 0, 1);
-    state.pointerY = clamp(clientY / state.height, 0, 1);
-    state.pointerActive = active;
-  }
-
-  function onPointerMove(event) {
-    setPointer(event.clientX, event.clientY, true);
-  }
-
-  function onTouchMove(event) {
-    if (event.touches.length > 0) {
-      setPointer(event.touches[0].clientX, event.touches[0].clientY, true);
-    }
-  }
-
   function clearField() {
     ctx.globalAlpha = 1;
     ctx.fillStyle = "#050506";
@@ -320,22 +301,25 @@
   }
 
   function updateSystems(delta) {
-    let targetX = state.pointerX;
-    let targetY = state.pointerY;
+    const scale = state.reducedMotion ? 0.32 : 1;
+    const ampX = state.reducedMotion ? 0.012 : 0.055;
+    const ampY = state.reducedMotion ? 0.008 : 0.038;
+    const time = state.time * scale;
+    const targetAX =
+      0.5 + Math.cos(time * 0.17) * ampX + Math.sin(time * 0.061 + 0.7) * ampX * 0.24;
+    const targetAY =
+      0.5 + Math.sin(time * 0.13 + 1.1) * ampY + Math.cos(time * 0.047) * ampY * 0.2;
+    const targetBX =
+      0.5 + Math.cos(time * 0.115 + 1.9) * ampX * 0.78 + Math.sin(time * 0.039) * ampX * 0.18;
+    const targetBY =
+      0.5 + Math.sin(time * 0.095 + 2.6) * ampY * 0.82 + Math.cos(time * 0.043 + 0.4) * ampY * 0.2;
+    const quick = clamp((state.reducedMotion ? 0.012 : 0.034) * delta, 0, 0.1);
+    const slow = clamp((state.reducedMotion ? 0.006 : 0.018) * delta, 0, 0.07);
 
-    if (!state.pointerActive) {
-      const idle = state.reducedMotion ? 0.008 : 0.03;
-      targetX = 0.5 + Math.cos(state.time * 0.08) * idle;
-      targetY = 0.5 + Math.sin(state.time * 0.065) * idle;
-    }
-
-    const quick = clamp((state.reducedMotion ? 0.035 : 0.085) * delta, 0, 0.24);
-    const slow = clamp((state.reducedMotion ? 0.01 : 0.025) * delta, 0, 0.14);
-
-    state.systemAX += (targetX - state.systemAX) * quick;
-    state.systemAY += (targetY - state.systemAY) * quick;
-    state.systemBX += (targetX - state.systemBX) * slow;
-    state.systemBY += (targetY - state.systemBY) * slow;
+    state.systemAX += (targetAX - state.systemAX) * quick;
+    state.systemAY += (targetAY - state.systemAY) * quick;
+    state.systemBX += (targetBX - state.systemBX) * slow;
+    state.systemBY += (targetBY - state.systemBY) * slow;
   }
 
   function updateParticles(delta) {
@@ -594,15 +578,6 @@
   }
 
   window.addEventListener("resize", scheduleResize);
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerdown", onPointerMove);
-  window.addEventListener("pointerleave", () => {
-    state.pointerActive = false;
-  });
-  window.addEventListener("touchmove", onTouchMove, { passive: true });
-  window.addEventListener("blur", () => {
-    state.pointerActive = false;
-  });
   document.addEventListener("visibilitychange", onVisibilityChange);
 
   resizeCanvas();

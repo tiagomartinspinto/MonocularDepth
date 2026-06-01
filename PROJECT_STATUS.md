@@ -7,6 +7,8 @@
 - Avoided blur filters, canvas shadows, particle glow, analytics, tracking, npm, and build steps.
 - Added pause-on-hidden-tab behavior and reduced-motion handling.
 - Removed visible controls so the artwork remains an uninterrupted field.
+- Removed pointer and touch interaction.
+- Made the field fully autonomous for exhibition playback.
 - Refined particle placement into subtle depth planes with slower drift.
 - Added a sparse broken depth-line layer between nearby particles.
 - Tuned the line layer toward unstable perspective rather than network-graph structure.
@@ -48,6 +50,6 @@
 
 - Open the Pages URL and confirm the canvas fills the window.
 - Confirm no visible UI appears.
-- Confirm CPU/GPU usage remains reasonable while moving the pointer.
+- Confirm CPU/GPU usage remains reasonable during passive playback.
 - Switch away from the tab and confirm activity drops.
 - Enable reduced motion and confirm the field slows down.

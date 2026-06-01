@@ -32,7 +32,9 @@ The image remains flat, but it keeps trying to become spatial.
 - dark monitor or projection
 - no visible browser chrome
 - can run passively
-- pointer movement may subtly affect the field
+- The work runs autonomously.
+- no mouse or touch interaction is required
+- keyboard and mouse should not be visible in the exhibition setup
 - dark or dim space recommended
 - no internet required after setup
 
