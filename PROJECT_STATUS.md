@@ -24,6 +24,9 @@
 - Kept the reference atmospheric only; no colour, no portrait, no music-video copy, no medical simulation claim.
 - Refined circular particles into irregular optical marks.
 - Reduced particle-demo/dot-field appearance.
+- Stayed with 2D canvas; no Three.js/WebGL introduced.
+- Removed obvious dot/shape rendering.
+- Refined the visual field toward smudge, haze, residue, and disappearing perspective traces.
 - Updated the meta description for the final public polish pass.
 - Kept deployment references generic in the visible documentation.
 - Simplified README into a short public-facing artwork note.

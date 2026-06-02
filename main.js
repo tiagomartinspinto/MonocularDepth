@@ -377,9 +377,7 @@
 
       ctx.globalAlpha = alpha;
       ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(frame.x, frame.y, radius, 0, TAU);
-      ctx.fill();
+      ctx.fillRect(frame.x - radius, frame.y - radius, radius * 2, radius * 2);
     }
 
     ctx.globalAlpha = 1;
@@ -452,85 +450,93 @@
     ctx.lineTo(lerp(x1, x2, end), lerp(y1, y2, end));
   }
 
-  function drawOpticalMark(x, y, radius, depth, softness, phase, alpha, color) {
-    const variant = Math.floor(seededUnit(phase + depth * 8.3) * 4);
+  function drawResidueSmudge(x, y, span, depth, softness, phase, alpha, color) {
     const instability = temporalInstability(phase + depth * 2.7);
-    const erasure = softness * lerp(0.18, 0.58, temporalInstability(phase * 0.61 + depth));
-    const markAlpha = clamp(alpha * lerp(0.64, 1.02, instability) * (1 - erasure * 0.48), 0.003, 0.38);
+    const wash = softness * lerp(0.2, 0.74, temporalInstability(phase * 0.61 + depth));
+    const baseAlpha = clamp(alpha * lerp(0.48, 0.9, instability) * (1 - wash * 0.62), 0.002, 0.13);
     const angle =
-      Math.sin(phase * 1.9 + state.time * 0.035) * 0.54 +
-      Math.sin(phase * 0.47) * 0.18;
-    const rx = radius * lerp(0.7, 1.55, seededUnit(phase + 1.7)) * lerp(0.88, 1.16, depth);
-    const ry = radius * lerp(0.32, 0.82, seededUnit(phase + 4.1)) * lerp(1.08, 0.82, depth);
-    const start = seededUnit(phase + 6.9) * TAU;
-    const arcLength = lerp(0.42, 1.18, seededUnit(phase + 9.2));
+      Math.sin(phase * 1.7 + state.time * 0.026) * 0.44 +
+      Math.sin(phase * 0.43) * 0.16;
+    const length = span * lerp(2.2, 4.8, seededUnit(phase + 1.7)) * lerp(0.72, 1.12, depth);
+    const spread = span * lerp(0.42, 1.14, seededUnit(phase + 4.1)) * (1 + softness * 0.55);
+    const layers = softness > 0.38 ? 4 : 3;
 
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-    ctx.fillStyle = color;
     ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineCap = "butt";
 
-    if (variant === 0 || variant === 1) {
-      ctx.globalAlpha = markAlpha;
+    for (let layer = 0; layer < layers; layer += 1) {
+      const seed = phase + layer * 3.17;
+      const offsetY = (seededUnit(seed + 2.2) - 0.5) * spread;
+      const start = -length * lerp(0.3, 0.55, seededUnit(seed + 5.4));
+      const mid = start + length * lerp(0.22, 0.38, seededUnit(seed + 6.7));
+      const end = start + length * lerp(0.42, 0.72, seededUnit(seed + 7.9));
+      const bend = (seededUnit(seed + 9.1) - 0.5) * spread * 0.32;
+      const layerAlpha = baseAlpha * lerp(0.28, 0.72, seededUnit(seed + 10.6));
+
+      ctx.globalAlpha = layerAlpha;
+      ctx.lineWidth = clamp(span * lerp(0.1, 0.26, seededUnit(seed + 11.3)), 0.12, 0.55);
       ctx.beginPath();
-      ctx.ellipse(0, 0, rx, ry, 0, 0, TAU);
-      ctx.fill();
-
-      if (variant === 1) {
-        ctx.globalAlpha = markAlpha * 0.34;
-        ctx.lineWidth = clamp(radius * 0.22, 0.2, 0.58);
-        ctx.beginPath();
-        ctx.ellipse(rx * 0.12, -ry * 0.08, rx * 1.18, ry * 0.82, 0, start, start + arcLength);
-        ctx.stroke();
+      ctx.moveTo(start, offsetY);
+      ctx.lineTo(mid, offsetY + bend);
+      if (seededUnit(seed + 12.8) > 0.34) {
+        ctx.moveTo(mid + length * 0.12, offsetY - bend * 0.5);
+        ctx.lineTo(end, offsetY + bend * 0.32);
       }
-    } else if (variant === 2) {
-      ctx.globalAlpha = markAlpha * 0.82;
-      ctx.lineWidth = clamp(radius * 0.28, 0.24, 0.72);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, rx * 1.12, ry * 0.9, 0, start, start + arcLength * 1.25);
       ctx.stroke();
-    } else {
-      ctx.globalAlpha = markAlpha * 0.72;
-      ctx.lineWidth = clamp(radius * 0.34, 0.25, 0.78);
-      ctx.beginPath();
-      ctx.moveTo(-rx * 0.78, Math.sin(phase) * ry * 0.18);
-      ctx.lineTo(-rx * 0.12, -ry * 0.16);
-      ctx.moveTo(rx * 0.16, ry * 0.12);
-      ctx.lineTo(rx * 0.7, Math.cos(phase) * ry * 0.2);
-      ctx.stroke();
+
+      if (layer < 2) {
+        ctx.globalAlpha = layerAlpha * 0.28;
+        ctx.fillRect(
+          start + length * 0.12,
+          offsetY - ctx.lineWidth * 0.75,
+          length * lerp(0.12, 0.24, seededUnit(seed + 13.9)),
+          ctx.lineWidth * lerp(0.7, 1.5, seededUnit(seed + 15.1))
+        );
+      }
     }
 
     ctx.restore();
 
-    if (softness > 0.24) {
-      const ghostAlpha = clamp(markAlpha * softness * 0.2, 0.004, 0.035);
-      const offset = lerp(0.52, 1.42, softness);
+    if (softness > 0.18) {
+      const offset = lerp(0.55, 1.65, softness);
 
       ctx.save();
       ctx.translate(
-        x + Math.cos(phase + state.time * 0.09) * offset,
-        y + Math.sin(phase * 1.17 + state.time * 0.07) * offset
+        x + Math.cos(phase + state.time * 0.08) * offset,
+        y + Math.sin(phase * 1.13 + state.time * 0.06) * offset
       );
-      ctx.rotate(angle + 0.16);
-      ctx.fillStyle = color;
-      ctx.globalAlpha = ghostAlpha;
+      ctx.rotate(angle + 0.08);
+      ctx.strokeStyle = color;
+      ctx.lineCap = "butt";
+      ctx.globalAlpha = clamp(baseAlpha * softness * 0.28, 0.002, 0.026);
+      ctx.lineWidth = clamp(span * 0.18, 0.14, 0.48);
       ctx.beginPath();
-      ctx.ellipse(0, 0, rx * 1.34, ry * 1.12, 0, 0, TAU);
-      ctx.fill();
+      ctx.moveTo(-length * 0.34, (seededUnit(phase + 18.2) - 0.5) * spread * 0.44);
+      ctx.lineTo(length * 0.22, (seededUnit(phase + 19.6) - 0.5) * spread * 0.4);
+      ctx.stroke();
       ctx.restore();
 
       ctx.save();
       ctx.translate(
-        x - Math.cos(phase * 0.83) * offset * 0.72,
-        y + Math.sin(phase * 0.71) * offset * 0.52
+        x - Math.cos(phase * 0.83) * offset * 0.8,
+        y + Math.sin(phase * 0.71) * offset * 0.58
       );
-      ctx.rotate(angle - 0.09);
+      ctx.rotate(angle - 0.05);
+      ctx.strokeStyle = FIELD_COLOR;
       ctx.fillStyle = FIELD_COLOR;
-      ctx.globalAlpha = clamp(softness * alpha * 0.24, 0.004, 0.052);
+      ctx.lineCap = "butt";
+      ctx.globalAlpha = clamp(softness * alpha * 0.34, 0.003, 0.06);
+      ctx.lineWidth = clamp(span * 0.34, 0.22, 0.86);
       ctx.beginPath();
-      ctx.ellipse(0, 0, rx * 0.92, ry * 0.72, 0, 0, TAU);
-      ctx.fill();
+      ctx.moveTo(-length * 0.38, 0);
+      ctx.lineTo(length * 0.3, (seededUnit(phase + 21.4) - 0.5) * spread * 0.3);
+      ctx.stroke();
+      ctx.globalAlpha *= 0.52;
+      ctx.fillRect(-length * 0.18, -ctx.lineWidth * 0.42, length * 0.34, ctx.lineWidth * 0.84);
       ctx.restore();
     }
 
@@ -538,9 +544,9 @@
   }
 
   function drawLines() {
-    const maxDistance = state.reducedMotion ? 84 : 112;
+    const maxDistance = state.reducedMotion ? 72 : 96;
     const maxDistanceSq = maxDistance * maxDistance;
-    const lineLimit = state.reducedMotion ? 4 : 8;
+    const lineLimit = state.reducedMotion ? 2 : 5;
     const vanishX = state.width * (0.5 + (state.systemAX - 0.5) * 0.18);
     const vanishY = state.height * (0.52 + (state.systemAY - 0.5) * 0.12);
     let lineCount = 0;
@@ -550,10 +556,10 @@
 
     for (let i = 0; i < state.particleCount; i += 1) {
       const a = particles[i];
-      if (a.lineBias < 0.64) continue;
+      if (a.lineBias < 0.72) continue;
 
       for (let j = i + 1; j < state.particleCount; j += 1) {
-        if (((i * 17 + j * 31) % 13) !== 0) continue;
+        if (((i * 17 + j * 31) % 17) !== 0) continue;
 
         const b = particles[j];
         if (a.plane !== b.plane) continue;
@@ -568,10 +574,10 @@
 
         const seed = i * 12.9898 + j * 78.233;
         const pulse = (Math.sin(state.time * 0.24 + seed) + 1) * 0.5;
-        if (pulse < 0.56) continue;
+        if (pulse < 0.64) continue;
 
         const depth = (a.depth + b.depth) * 0.5;
-        const fade = easeInOut((pulse - 0.56) / 0.44);
+        const fade = easeInOut((pulse - 0.64) / 0.36);
         const distanceFade = 1 - distanceSq / maxDistanceSq;
         const perspectivePull = lerp(0.018, 0.055, 1 - depth);
         const ax = lerp(a.x1, vanishX, perspectivePull);
@@ -582,23 +588,33 @@
         const temporalFade = lerp(0.46, 1, temporalInstability(seed));
         const shift = Math.sin(seed * 0.37) * 0.035;
 
-        ctx.lineWidth = lerp(0.34, 0.54, softness);
+        ctx.lineCap = "butt";
+        ctx.lineWidth = lerp(0.28, 0.46, softness);
         ctx.globalAlpha =
-          fade * distanceFade * lerp(0.009, 0.038, depth) * (1 - softness * 0.78) * temporalFade;
+          fade * distanceFade * lerp(0.004, 0.022, depth) * (1 - softness * 0.86) * temporalFade;
         ctx.beginPath();
-        addBrokenSegment(ax, ay, bx, by, 0.1, 0.22 + shift);
-        addBrokenSegment(ax, ay, bx, by, 0.48 - shift, 0.58);
-        if (depth > 0.64 && pulse > 0.72) addBrokenSegment(ax, ay, bx, by, 0.82, 0.9);
+        addBrokenSegment(ax, ay, bx, by, 0.12, 0.18 + shift * 0.5);
+        if (pulse > 0.78) addBrokenSegment(ax, ay, bx, by, 0.5 - shift, 0.55);
+        if (depth > 0.7 && pulse > 0.84) addBrokenSegment(ax, ay, bx, by, 0.84, 0.88);
         ctx.stroke();
 
-        if (softness > 0.28) {
-          const smear = softness * lerp(0.12, 0.28, temporalFade);
+        if (softness > 0.18) {
+          const smear = softness * lerp(0.08, 0.18, temporalFade);
 
           ctx.globalAlpha *= smear;
           ctx.beginPath();
-          addBrokenSegment(ax + 0.8, ay - 0.5, bx + 0.8, by - 0.5, 0.14, 0.28 + shift);
-          addBrokenSegment(ax - 0.68, ay + 0.38, bx - 0.68, by + 0.38, 0.52 - shift, 0.6);
+          addBrokenSegment(ax + 0.7, ay - 0.42, bx + 0.7, by - 0.42, 0.14, 0.22 + shift * 0.4);
+          addBrokenSegment(ax - 0.6, ay + 0.34, bx - 0.6, by + 0.34, 0.52 - shift, 0.57);
           ctx.stroke();
+
+          ctx.strokeStyle = FIELD_COLOR;
+          ctx.globalAlpha = clamp(softness * 0.014, 0.002, 0.016);
+          ctx.lineWidth = lerp(0.8, 1.8, softness);
+          ctx.beginPath();
+          addBrokenSegment(ax, ay, bx, by, 0.26, 0.38);
+          addBrokenSegment(ax, ay, bx, by, 0.62, 0.74);
+          ctx.stroke();
+          ctx.strokeStyle = LINE_COLOR;
         }
 
         lineCount += 1;
@@ -620,10 +636,10 @@
       const unstable = 0.58 + Math.sin(state.time * 0.45 + p.phase) * 0.18;
       const softness = softnessAt(p.x2, p.y2);
       const dissolve = lerp(0.68, 1, temporalInstability(p.phase));
-      const alpha = (0.034 + state.instability * 0.02) * unstable * (1 - softness * 0.62) * dissolve;
-      const radius = p.radius * lerp(0.92, 1.36 + softness * 0.38, p.depth);
+      const alpha = (0.022 + state.instability * 0.012) * unstable * (1 - softness * 0.7) * dissolve;
+      const span = p.radius * lerp(1.2, 1.9 + softness * 0.46, p.depth);
 
-      drawOpticalMark(p.x2, p.y2, radius, p.depth, softness, p.phase + 1.4, alpha, SECONDARY_MARK_COLOR);
+      drawResidueSmudge(p.x2, p.y2, span, p.depth, softness, p.phase + 1.4, alpha, SECONDARY_MARK_COLOR);
     }
 
     ctx.globalAlpha = 1;
@@ -636,18 +652,16 @@
       const p = particles[index];
       if (p.depth < 0.78 || p.lineBias < 0.42) continue;
 
-      ctx.globalAlpha = 0.035;
-      ctx.beginPath();
-      ctx.ellipse(
+      drawResidueSmudge(
         p.x1,
         p.y1,
-        p.radius * lerp(4.1, 5.7, p.depth),
-        p.radius * lerp(2.6, 4.2, p.lineBias),
-        Math.sin(p.phase) * 0.76,
-        0,
-        TAU
+        p.radius * lerp(2.4, 4.2, p.depth),
+        p.depth,
+        softnessAt(p.x1, p.y1),
+        p.phase + 5.6,
+        0.045,
+        FIELD_COLOR
       );
-      ctx.fill();
     }
 
     ctx.globalAlpha = 1;
@@ -659,11 +673,11 @@
     for (let index = 0; index < state.particleCount; index += 1) {
       const p = particles[index];
       const softness = softnessAt(p.x1, p.y1);
-      const radius = p.radius * lerp(0.82, 1.32 + softness * 0.54, p.depth);
+      const span = p.radius * lerp(1.2, 2.2 + softness * 0.72, p.depth);
       const focus = lerp(0.74, 1.03, temporalInstability(p.phase + p.depth * 3));
-      const baseAlpha = lerp(0.12, 0.34, p.depth) * (1 - softness * 0.56) * focus;
+      const baseAlpha = lerp(0.055, 0.19, p.depth) * (1 - softness * 0.64) * focus;
 
-      drawOpticalMark(p.x1, p.y1, radius, p.depth, softness, p.phase, baseAlpha, MARK_COLOR);
+      drawResidueSmudge(p.x1, p.y1, span, p.depth, softness, p.phase, baseAlpha, MARK_COLOR);
     }
 
     ctx.globalAlpha = 1;
