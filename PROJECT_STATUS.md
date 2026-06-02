@@ -27,6 +27,9 @@
 - Stayed with 2D canvas; no Three.js/WebGL introduced.
 - Removed obvious dot/shape rendering.
 - Refined the visual field toward smudge, haze, residue, and disappearing perspective traces.
+- Recovered visible perceptual structure after overly faint smudge pass.
+- Increased monochrome contrast while avoiding dot/particle rendering.
+- Restored disappearing perspective traces and soft depth residue.
 - Updated the meta description for the final public polish pass.
 - Kept deployment references generic in the visible documentation.
 - Simplified README into a short public-facing artwork note.
