@@ -15,13 +15,12 @@
   const MARK_COLOR = "#181816";
   const SECONDARY_MARK_COLOR = "#343430";
   const LINE_COLOR = "#4d4d47";
-  const SOFT_ZONE_COUNT = 4;
 
   const softZones = [
-    { x: 0.22, y: 0.34, radius: 0.24, phase: 0.4, driftX: 0.032, driftY: 0.026 },
-    { x: 0.66, y: 0.28, radius: 0.2, phase: 2.1, driftX: 0.025, driftY: 0.02 },
-    { x: 0.48, y: 0.58, radius: 0.28, phase: 3.7, driftX: 0.03, driftY: 0.024 },
-    { x: 0.78, y: 0.68, radius: 0.22, phase: 5.2, driftX: 0.024, driftY: 0.03 }
+    { x: 0.22, y: 0.34, radius: 0.25, phase: 0.4, driftX: 0.035, driftY: 0.029, wash: 0.032 },
+    { x: 0.66, y: 0.28, radius: 0.21, phase: 2.1, driftX: 0.028, driftY: 0.022, wash: 0.026 },
+    { x: 0.48, y: 0.58, radius: 0.3, phase: 3.7, driftX: 0.032, driftY: 0.027, wash: 0.038 },
+    { x: 0.78, y: 0.68, radius: 0.24, phase: 5.2, driftX: 0.026, driftY: 0.032, wash: 0.03 }
   ];
 
   const SUBJECTS = [
@@ -117,6 +116,7 @@
 
   const particles = [];
   const textEvents = [];
+  const softFrames = softZones.map(() => ({ x: 0, y: 0, radius: 1 }));
 
   const state = {
     width: 1,
@@ -158,27 +158,49 @@
     return min + Math.random() * (max - min);
   }
 
+  function temporalInstability(seed) {
+    return clamp(
+      0.5 +
+        Math.sin(state.time * 0.43 + seed) * 0.28 +
+        Math.sin(state.time * 1.37 + seed * 0.41) * 0.14 +
+        Math.sin(state.time * 2.7 + seed * 0.17) * 0.06,
+      0,
+      1
+    );
+  }
+
   function pick(bank) {
     return bank[Math.floor(Math.random() * bank.length)];
+  }
+
+  function updateSoftFrames() {
+    const scale = Math.min(state.width, state.height);
+
+    for (let index = 0; index < softZones.length; index += 1) {
+      const zone = softZones[index];
+      const frame = softFrames[index];
+
+      frame.x = (zone.x + Math.cos(state.time * 0.021 + zone.phase) * zone.driftX) * state.width;
+      frame.y = (zone.y + Math.sin(state.time * 0.017 + zone.phase * 1.3) * zone.driftY) * state.height;
+      frame.radius = zone.radius * scale;
+    }
+  }
+
+  function zoneSoftness(x, y, frame) {
+    const dx = x - frame.x;
+    const dy = y - frame.y;
+    const distance = Math.sqrt(dx * dx + dy * dy) / frame.radius;
+
+    if (distance >= 1) return 0;
+
+    return easeInOut(1 - distance);
   }
 
   function softnessAt(x, y) {
     let softness = 0;
 
-    for (let index = 0; index < SOFT_ZONE_COUNT; index += 1) {
-      const zone = softZones[index];
-      const zoneX =
-        (zone.x + Math.cos(state.time * 0.021 + zone.phase) * zone.driftX) * state.width;
-      const zoneY =
-        (zone.y + Math.sin(state.time * 0.017 + zone.phase * 1.3) * zone.driftY) * state.height;
-      const radius = zone.radius * Math.min(state.width, state.height);
-      const dx = x - zoneX;
-      const dy = y - zoneY;
-      const distance = Math.sqrt(dx * dx + dy * dy) / radius;
-
-      if (distance < 1) {
-        softness = Math.max(softness, easeInOut(1 - distance));
-      }
+    for (let index = 0; index < softZones.length; index += 1) {
+      softness = Math.max(softness, zoneSoftness(x, y, softFrames[index]));
     }
 
     return softness;
@@ -334,6 +356,39 @@
     ctx.fillRect(0, 0, state.width, state.height);
   }
 
+  function drawSoftWash(strength) {
+    for (let index = 0; index < softZones.length; index += 1) {
+      const zone = softZones[index];
+      const frame = softFrames[index];
+      const flicker = temporalInstability(zone.phase);
+      const radius = frame.radius * lerp(0.72, 1.08, flicker);
+      const alpha = zone.wash * strength * lerp(0.58, 1.18, flicker);
+      const gradient = ctx.createRadialGradient(frame.x, frame.y, 0, frame.x, frame.y, radius);
+
+      gradient.addColorStop(0, "rgba(243, 240, 232, 0.52)");
+      gradient.addColorStop(0.62, "rgba(243, 240, 232, 0.18)");
+      gradient.addColorStop(1, "rgba(243, 240, 232, 0)");
+
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(frame.x, frame.y, radius, 0, TAU);
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  function drawExposureVeil() {
+    const flicker = temporalInstability(8.4);
+    const alpha = (state.reducedMotion ? 0.006 : 0.01) + flicker * (state.reducedMotion ? 0.004 : 0.012);
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = FIELD_COLOR;
+    ctx.fillRect(0, 0, state.width, state.height);
+    ctx.globalAlpha = 1;
+  }
+
   function updateSystems(delta) {
     const scale = state.reducedMotion ? 0.32 : 1;
     const ampX = state.reducedMotion ? 0.012 : 0.055;
@@ -433,21 +488,25 @@
         const bx = lerp(b.x1, vanishX, perspectivePull);
         const by = lerp(b.y1, vanishY, perspectivePull);
         const softness = softnessAt((ax + bx) * 0.5, (ay + by) * 0.5);
+        const temporalFade = lerp(0.46, 1, temporalInstability(seed));
         const shift = Math.sin(seed * 0.37) * 0.035;
 
         ctx.lineWidth = lerp(0.42, 0.68, softness);
-        ctx.globalAlpha = fade * distanceFade * lerp(0.018, 0.06, depth) * (1 - softness * 0.55);
+        ctx.globalAlpha =
+          fade * distanceFade * lerp(0.014, 0.052, depth) * (1 - softness * 0.72) * temporalFade;
         ctx.beginPath();
         addBrokenSegment(ax, ay, bx, by, 0.08, 0.28 + shift);
         addBrokenSegment(ax, ay, bx, by, 0.46 - shift, 0.68);
         if (depth > 0.52) addBrokenSegment(ax, ay, bx, by, 0.78, 0.92);
         ctx.stroke();
 
-        if (softness > 0.38) {
-          ctx.globalAlpha *= 0.38;
+        if (softness > 0.28) {
+          const smear = softness * lerp(0.2, 0.42, temporalFade);
+
+          ctx.globalAlpha *= smear;
           ctx.beginPath();
-          addBrokenSegment(ax + 0.7, ay - 0.5, bx + 0.7, by - 0.5, 0.12, 0.3 + shift);
-          addBrokenSegment(ax - 0.6, ay + 0.4, bx - 0.6, by + 0.4, 0.5 - shift, 0.66);
+          addBrokenSegment(ax + 0.9, ay - 0.55, bx + 0.9, by - 0.55, 0.12, 0.34 + shift);
+          addBrokenSegment(ax - 0.75, ay + 0.45, bx - 0.75, by + 0.45, 0.5 - shift, 0.64);
           ctx.stroke();
         }
 
@@ -469,12 +528,26 @@
       const p = particles[index];
       const unstable = 0.58 + Math.sin(state.time * 0.45 + p.phase) * 0.18;
       const softness = softnessAt(p.x2, p.y2);
-      const alpha = (0.05 + state.instability * 0.026) * unstable * (1 - softness * 0.5);
+      const dissolve = lerp(0.68, 1, temporalInstability(p.phase));
+      const alpha = (0.045 + state.instability * 0.024) * unstable * (1 - softness * 0.58) * dissolve;
 
       ctx.globalAlpha = clamp(alpha, 0.014, 0.1);
       ctx.beginPath();
       ctx.arc(p.x2, p.y2, p.radius * lerp(1.15, 1.5 + softness * 0.55, p.depth), 0, TAU);
       ctx.fill();
+
+      if (softness > 0.34) {
+        ctx.globalAlpha = clamp(alpha * softness * 0.35, 0.006, 0.03);
+        ctx.beginPath();
+        ctx.arc(
+          p.x2 + Math.cos(p.phase) * 1.7,
+          p.y2 + Math.sin(p.phase * 1.3) * 1.2,
+          p.radius * lerp(1.85, 2.45, softness),
+          0,
+          TAU
+        );
+        ctx.fill();
+      }
     }
 
     ctx.globalAlpha = 1;
@@ -503,16 +576,29 @@
       const p = particles[index];
       const softness = softnessAt(p.x1, p.y1);
       const radius = p.radius * lerp(0.82, 1.32 + softness * 0.54, p.depth);
+      const focus = lerp(0.74, 1.03, temporalInstability(p.phase + p.depth * 3));
+      const baseAlpha = lerp(0.15, 0.42, p.depth) * (1 - softness * 0.5) * focus;
 
-      ctx.globalAlpha = lerp(0.16, 0.44, p.depth) * (1 - softness * 0.38);
+      ctx.globalAlpha = clamp(baseAlpha, 0.045, 0.42);
       ctx.beginPath();
       ctx.arc(p.x1, p.y1, radius, 0, TAU);
       ctx.fill();
 
-      if (softness > 0.42) {
-        ctx.globalAlpha *= 0.32;
+      if (softness > 0.28) {
+        ctx.globalAlpha = clamp(baseAlpha * softness * 0.24, 0.006, 0.055);
         ctx.beginPath();
-        ctx.arc(p.x1 + 0.8, p.y1 - 0.45, radius * 1.42, 0, TAU);
+        ctx.arc(
+          p.x1 + Math.cos(p.phase + state.time * 0.12) * 1.1,
+          p.y1 + Math.sin(p.phase * 0.9 + state.time * 0.08) * 0.85,
+          radius * lerp(1.38, 1.92, softness),
+          0,
+          TAU
+        );
+        ctx.fill();
+
+        ctx.globalAlpha = clamp(baseAlpha * softness * 0.13, 0.004, 0.032);
+        ctx.beginPath();
+        ctx.arc(p.x1 - 0.9, p.y1 + 0.52, radius * lerp(1.62, 2.35, softness), 0, TAU);
         ctx.fill();
       }
     }
@@ -550,23 +636,35 @@
 
     const x = clamp(event.x * state.width, event.width / 2 + 20, state.width - event.width / 2 - 20);
     const y = event.y * state.height;
+    const softness = softnessAt(x, y);
+    const flicker = lerp(0.76, 1, temporalInstability(event.width * 0.017));
 
     ctx.font = state.textFont;
     ctx.fillStyle = MARK_COLOR;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.globalAlpha = alpha * event.alpha;
+    ctx.globalAlpha = alpha * event.alpha * (1 - softness * 0.36) * flicker;
     ctx.fillText(event.text, x, y);
+
+    if (softness > 0.36) {
+      ctx.globalAlpha = alpha * event.alpha * softness * 0.16;
+      ctx.fillText(event.text, x + 0.8, y - 0.55);
+    }
+
     ctx.globalAlpha = 1;
   }
 
   function drawStillFrame() {
     clearField();
     updateParticles(1);
+    updateSoftFrames();
     drawSystemB();
     drawLines();
     drawOcclusion();
+    drawSoftWash(0.72);
     drawSystemA();
+    drawSoftWash(0.16);
+    drawExposureVeil();
     drawLanguage();
   }
 
@@ -584,13 +682,17 @@
     state.time += (rawDelta / 1000) * timeScale;
     state.textElapsed += rawDelta / 1000;
 
+    updateSoftFrames();
     updateSystems(delta);
     updateParticles(delta);
     clearField();
     drawSystemB();
     drawLines();
     drawOcclusion();
+    drawSoftWash(0.72);
     drawSystemA();
+    drawSoftWash(0.16);
+    drawExposureVeil();
     drawLanguage();
 
     state.animationId = window.requestAnimationFrame(drawFrame);
