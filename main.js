@@ -158,6 +158,12 @@
     return min + Math.random() * (max - min);
   }
 
+  function seededUnit(seed) {
+    const value = Math.sin(seed * 12.9898) * 43758.5453;
+
+    return value - Math.floor(value);
+  }
+
   function temporalInstability(seed) {
     return clamp(
       0.5 +
@@ -446,10 +452,95 @@
     ctx.lineTo(lerp(x1, x2, end), lerp(y1, y2, end));
   }
 
+  function drawOpticalMark(x, y, radius, depth, softness, phase, alpha, color) {
+    const variant = Math.floor(seededUnit(phase + depth * 8.3) * 4);
+    const instability = temporalInstability(phase + depth * 2.7);
+    const erasure = softness * lerp(0.18, 0.58, temporalInstability(phase * 0.61 + depth));
+    const markAlpha = clamp(alpha * lerp(0.64, 1.02, instability) * (1 - erasure * 0.48), 0.003, 0.38);
+    const angle =
+      Math.sin(phase * 1.9 + state.time * 0.035) * 0.54 +
+      Math.sin(phase * 0.47) * 0.18;
+    const rx = radius * lerp(0.7, 1.55, seededUnit(phase + 1.7)) * lerp(0.88, 1.16, depth);
+    const ry = radius * lerp(0.32, 0.82, seededUnit(phase + 4.1)) * lerp(1.08, 0.82, depth);
+    const start = seededUnit(phase + 6.9) * TAU;
+    const arcLength = lerp(0.42, 1.18, seededUnit(phase + 9.2));
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+
+    if (variant === 0 || variant === 1) {
+      ctx.globalAlpha = markAlpha;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, TAU);
+      ctx.fill();
+
+      if (variant === 1) {
+        ctx.globalAlpha = markAlpha * 0.34;
+        ctx.lineWidth = clamp(radius * 0.22, 0.2, 0.58);
+        ctx.beginPath();
+        ctx.ellipse(rx * 0.12, -ry * 0.08, rx * 1.18, ry * 0.82, 0, start, start + arcLength);
+        ctx.stroke();
+      }
+    } else if (variant === 2) {
+      ctx.globalAlpha = markAlpha * 0.82;
+      ctx.lineWidth = clamp(radius * 0.28, 0.24, 0.72);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx * 1.12, ry * 0.9, 0, start, start + arcLength * 1.25);
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = markAlpha * 0.72;
+      ctx.lineWidth = clamp(radius * 0.34, 0.25, 0.78);
+      ctx.beginPath();
+      ctx.moveTo(-rx * 0.78, Math.sin(phase) * ry * 0.18);
+      ctx.lineTo(-rx * 0.12, -ry * 0.16);
+      ctx.moveTo(rx * 0.16, ry * 0.12);
+      ctx.lineTo(rx * 0.7, Math.cos(phase) * ry * 0.2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    if (softness > 0.24) {
+      const ghostAlpha = clamp(markAlpha * softness * 0.2, 0.004, 0.035);
+      const offset = lerp(0.52, 1.42, softness);
+
+      ctx.save();
+      ctx.translate(
+        x + Math.cos(phase + state.time * 0.09) * offset,
+        y + Math.sin(phase * 1.17 + state.time * 0.07) * offset
+      );
+      ctx.rotate(angle + 0.16);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = ghostAlpha;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx * 1.34, ry * 1.12, 0, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(
+        x - Math.cos(phase * 0.83) * offset * 0.72,
+        y + Math.sin(phase * 0.71) * offset * 0.52
+      );
+      ctx.rotate(angle - 0.09);
+      ctx.fillStyle = FIELD_COLOR;
+      ctx.globalAlpha = clamp(softness * alpha * 0.24, 0.004, 0.052);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx * 0.92, ry * 0.72, 0, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
   function drawLines() {
-    const maxDistance = state.reducedMotion ? 96 : 128;
+    const maxDistance = state.reducedMotion ? 84 : 112;
     const maxDistanceSq = maxDistance * maxDistance;
-    const lineLimit = state.reducedMotion ? 6 : 12;
+    const lineLimit = state.reducedMotion ? 4 : 8;
     const vanishX = state.width * (0.5 + (state.systemAX - 0.5) * 0.18);
     const vanishY = state.height * (0.52 + (state.systemAY - 0.5) * 0.12);
     let lineCount = 0;
@@ -459,10 +550,10 @@
 
     for (let i = 0; i < state.particleCount; i += 1) {
       const a = particles[i];
-      if (a.lineBias < 0.56) continue;
+      if (a.lineBias < 0.64) continue;
 
       for (let j = i + 1; j < state.particleCount; j += 1) {
-        if (((i * 17 + j * 31) % 9) !== 0) continue;
+        if (((i * 17 + j * 31) % 13) !== 0) continue;
 
         const b = particles[j];
         if (a.plane !== b.plane) continue;
@@ -477,10 +568,10 @@
 
         const seed = i * 12.9898 + j * 78.233;
         const pulse = (Math.sin(state.time * 0.24 + seed) + 1) * 0.5;
-        if (pulse < 0.48) continue;
+        if (pulse < 0.56) continue;
 
         const depth = (a.depth + b.depth) * 0.5;
-        const fade = easeInOut((pulse - 0.48) / 0.52);
+        const fade = easeInOut((pulse - 0.56) / 0.44);
         const distanceFade = 1 - distanceSq / maxDistanceSq;
         const perspectivePull = lerp(0.018, 0.055, 1 - depth);
         const ax = lerp(a.x1, vanishX, perspectivePull);
@@ -491,22 +582,22 @@
         const temporalFade = lerp(0.46, 1, temporalInstability(seed));
         const shift = Math.sin(seed * 0.37) * 0.035;
 
-        ctx.lineWidth = lerp(0.42, 0.68, softness);
+        ctx.lineWidth = lerp(0.34, 0.54, softness);
         ctx.globalAlpha =
-          fade * distanceFade * lerp(0.014, 0.052, depth) * (1 - softness * 0.72) * temporalFade;
+          fade * distanceFade * lerp(0.009, 0.038, depth) * (1 - softness * 0.78) * temporalFade;
         ctx.beginPath();
-        addBrokenSegment(ax, ay, bx, by, 0.08, 0.28 + shift);
-        addBrokenSegment(ax, ay, bx, by, 0.46 - shift, 0.68);
-        if (depth > 0.52) addBrokenSegment(ax, ay, bx, by, 0.78, 0.92);
+        addBrokenSegment(ax, ay, bx, by, 0.1, 0.22 + shift);
+        addBrokenSegment(ax, ay, bx, by, 0.48 - shift, 0.58);
+        if (depth > 0.64 && pulse > 0.72) addBrokenSegment(ax, ay, bx, by, 0.82, 0.9);
         ctx.stroke();
 
         if (softness > 0.28) {
-          const smear = softness * lerp(0.2, 0.42, temporalFade);
+          const smear = softness * lerp(0.12, 0.28, temporalFade);
 
           ctx.globalAlpha *= smear;
           ctx.beginPath();
-          addBrokenSegment(ax + 0.9, ay - 0.55, bx + 0.9, by - 0.55, 0.12, 0.34 + shift);
-          addBrokenSegment(ax - 0.75, ay + 0.45, bx - 0.75, by + 0.45, 0.5 - shift, 0.64);
+          addBrokenSegment(ax + 0.8, ay - 0.5, bx + 0.8, by - 0.5, 0.14, 0.28 + shift);
+          addBrokenSegment(ax - 0.68, ay + 0.38, bx - 0.68, by + 0.38, 0.52 - shift, 0.6);
           ctx.stroke();
         }
 
@@ -529,25 +620,10 @@
       const unstable = 0.58 + Math.sin(state.time * 0.45 + p.phase) * 0.18;
       const softness = softnessAt(p.x2, p.y2);
       const dissolve = lerp(0.68, 1, temporalInstability(p.phase));
-      const alpha = (0.045 + state.instability * 0.024) * unstable * (1 - softness * 0.58) * dissolve;
+      const alpha = (0.034 + state.instability * 0.02) * unstable * (1 - softness * 0.62) * dissolve;
+      const radius = p.radius * lerp(0.92, 1.36 + softness * 0.38, p.depth);
 
-      ctx.globalAlpha = clamp(alpha, 0.014, 0.1);
-      ctx.beginPath();
-      ctx.arc(p.x2, p.y2, p.radius * lerp(1.15, 1.5 + softness * 0.55, p.depth), 0, TAU);
-      ctx.fill();
-
-      if (softness > 0.34) {
-        ctx.globalAlpha = clamp(alpha * softness * 0.35, 0.006, 0.03);
-        ctx.beginPath();
-        ctx.arc(
-          p.x2 + Math.cos(p.phase) * 1.7,
-          p.y2 + Math.sin(p.phase * 1.3) * 1.2,
-          p.radius * lerp(1.85, 2.45, softness),
-          0,
-          TAU
-        );
-        ctx.fill();
-      }
+      drawOpticalMark(p.x2, p.y2, radius, p.depth, softness, p.phase + 1.4, alpha, SECONDARY_MARK_COLOR);
     }
 
     ctx.globalAlpha = 1;
@@ -560,9 +636,17 @@
       const p = particles[index];
       if (p.depth < 0.78 || p.lineBias < 0.42) continue;
 
-      ctx.globalAlpha = 0.045;
+      ctx.globalAlpha = 0.035;
       ctx.beginPath();
-      ctx.arc(p.x1, p.y1, p.radius * 5.2, 0, TAU);
+      ctx.ellipse(
+        p.x1,
+        p.y1,
+        p.radius * lerp(4.1, 5.7, p.depth),
+        p.radius * lerp(2.6, 4.2, p.lineBias),
+        Math.sin(p.phase) * 0.76,
+        0,
+        TAU
+      );
       ctx.fill();
     }
 
@@ -577,30 +661,9 @@
       const softness = softnessAt(p.x1, p.y1);
       const radius = p.radius * lerp(0.82, 1.32 + softness * 0.54, p.depth);
       const focus = lerp(0.74, 1.03, temporalInstability(p.phase + p.depth * 3));
-      const baseAlpha = lerp(0.15, 0.42, p.depth) * (1 - softness * 0.5) * focus;
+      const baseAlpha = lerp(0.12, 0.34, p.depth) * (1 - softness * 0.56) * focus;
 
-      ctx.globalAlpha = clamp(baseAlpha, 0.045, 0.42);
-      ctx.beginPath();
-      ctx.arc(p.x1, p.y1, radius, 0, TAU);
-      ctx.fill();
-
-      if (softness > 0.28) {
-        ctx.globalAlpha = clamp(baseAlpha * softness * 0.24, 0.006, 0.055);
-        ctx.beginPath();
-        ctx.arc(
-          p.x1 + Math.cos(p.phase + state.time * 0.12) * 1.1,
-          p.y1 + Math.sin(p.phase * 0.9 + state.time * 0.08) * 0.85,
-          radius * lerp(1.38, 1.92, softness),
-          0,
-          TAU
-        );
-        ctx.fill();
-
-        ctx.globalAlpha = clamp(baseAlpha * softness * 0.13, 0.004, 0.032);
-        ctx.beginPath();
-        ctx.arc(p.x1 - 0.9, p.y1 + 0.52, radius * lerp(1.62, 2.35, softness), 0, TAU);
-        ctx.fill();
-      }
+      drawOpticalMark(p.x1, p.y1, radius, p.depth, softness, p.phase, baseAlpha, MARK_COLOR);
     }
 
     ctx.globalAlpha = 1;

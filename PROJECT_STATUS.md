@@ -22,6 +22,8 @@
 - Added subtle non-uniform softness zones without illustrative or condition-specific framing.
 - Refined monochrome light-field optics toward haze, uneven focus, and subtle visual dissolution.
 - Kept the reference atmospheric only; no colour, no portrait, no music-video copy, no medical simulation claim.
+- Refined circular particles into irregular optical marks.
+- Reduced particle-demo/dot-field appearance.
 - Updated the meta description for the final public polish pass.
 - Kept deployment references generic in the visible documentation.
 - Simplified README into a short public-facing artwork note.
@@ -37,7 +39,7 @@
 
 ## Known Issues
 
-- The field is intentionally dim and may need a brighter display.
+- The light field may need display brightness and contrast checked on the final exhibition screen.
 - Browser and battery-saver modes can affect canvas frame pacing.
 - GitHub Pages may take a short moment to refresh cached assets after a push.
 
