@@ -40,6 +40,7 @@ The image remains flat, but it keeps trying to become spatial.
 
 ## Technical Notes
 
+- Technical requirement: A modern browser with hardware-accelerated WebGL support. The work runs locally without network access and requires no backend or external services.
 - static HTML/CSS/JavaScript
 - no backend
 - no analytics
