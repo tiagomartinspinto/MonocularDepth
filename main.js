@@ -1,921 +1,846 @@
-(function () {
-  "use strict";
+import {
+  CanvasTexture,
+  Color,
+  DataTexture,
+  Fog,
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  Matrix4,
+  Mesh,
+  MeshBasicMaterial,
+  PerspectiveCamera,
+  PlaneGeometry,
+  RGBAFormat,
+  Scene,
+  Vector3,
+  WebGLRenderer
+} from "./vendor/three/three.module.js";
 
-  const canvas = document.getElementById("depth-field");
-  const ctx = canvas.getContext("2d", { alpha: false });
-  const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const canvas = document.getElementById("depth-field");
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-  const MAX_DESKTOP_PARTICLES = 60;
-  const MAX_MOBILE_PARTICLES = 35;
-  const MOBILE_BREAKPOINT = 640;
-  const MAX_DPR = 1.5;
-  const TEXT_EVENT_COUNT = 96;
-  const TAU = Math.PI * 2;
-  const FIELD_COLOR = "#f3f0e8";
-  const MARK_COLOR = "#141412";
-  const SECONDARY_MARK_COLOR = "#2a2a26";
-  const LINE_COLOR = "#3a3a34";
+const TAU = Math.PI * 2;
+const FOV = 24;
+const HALF_TAN = Math.tan((FOV * Math.PI) / 360);
+const NOMINAL_ASPECT = 16 / 9;
+const FIXATION_DEPTH = 9;
+const COVER = 1.5;
+const MAX_DPR = 1.5;
+const FOG_NEAR = 4;
 
-  const softZones = [
-    { x: 0.22, y: 0.34, radius: 0.25, phase: 0.4, driftX: 0.035, driftY: 0.029, wash: 0.032 },
-    { x: 0.66, y: 0.28, radius: 0.21, phase: 2.1, driftX: 0.028, driftY: 0.022, wash: 0.026 },
-    { x: 0.48, y: 0.58, radius: 0.3, phase: 3.7, driftX: 0.032, driftY: 0.027, wash: 0.038 },
-    { x: 0.78, y: 0.68, radius: 0.24, phase: 5.2, driftX: 0.026, driftY: 0.032, wash: 0.03 }
-  ];
+// One warm tonal ladder. Every step has a single role; depth moves a tone toward the field.
+const TONE = {
+  field: 0xf3f0e8,
+  graphite: 0x6d6a63,
+  charcoal: 0x3d3b37,
+  ink: 0x211f1c,
+  trace: 0x4a4843,
+  text: 0x3a3833
+};
 
-  const depthBands = [
-    { x: 0.46, y: 0.34, width: 0.92, height: 0.18, angle: -0.08, phase: 0.8, driftX: 0.026, driftY: 0.018, alpha: 0.042 },
-    { x: 0.52, y: 0.52, width: 0.82, height: 0.16, angle: 0.12, phase: 2.9, driftX: 0.018, driftY: 0.022, alpha: 0.052 },
-    { x: 0.58, y: 0.7, width: 1.06, height: 0.2, angle: -0.16, phase: 4.6, driftX: 0.022, driftY: 0.019, alpha: 0.038 }
-  ];
+const STAIN = { grain: 7, stretch: 0.13, tilt: 0, warp: 1.3, rough: 0.75, edge: 0.07, inner: 0.6, erase: 0.35, cut: null };
+const VEIL = { grain: 3.2, stretch: 0.4, tilt: 0, warp: 1.4, rough: 0.6, edge: 0.18, inner: 0.3, erase: 0, cut: null };
 
-  const SUBJECTS = [
-    "the room",
-    "the wall",
-    "the image",
-    "the window",
-    "the floor",
-    "the corner",
-    "the horizon",
-    "the surface",
-    "the shadow",
-    "the distance",
-    "the memory",
-    "the map",
-    "the object",
-    "the eye",
-    "the other eye",
-    "the blind spot",
-    "the edge",
-    "the field"
-  ];
+// Masses are [x, y, radiusX, radiusY, weight] in view fractions (-1..1) at each layer's depth: long strata, not objects.
+// A cut is a wavering half-plane [normalX, normalY, offset] that gives an occluding edge without a visible rectangle.
+// Built far to near so that space assembles from the back.
+const LAYERS = [
+  { depth: 21, kind: "stain", tone: "ink", opacity: 0.8, stretch: 0.1, tilt: 0.015,
+    masses: [[-0.3, 0.1, 1.0, 0.05, 1], [0.7, 0.04, 0.3, 0.035, 0.8]] },
+  { depth: 17.5, kind: "stain", tone: "charcoal", opacity: 0.72,
+    masses: [[0.3, 0.02, 0.6, 0.07, 1], [-0.9, 0.28, 0.4, 0.05, 0.75]] },
+  { depth: 15.2, kind: "veil", opacity: 0.55,
+    masses: [[0.2, 0.08, 0.8, 0.35, 0.9]] },
+  { depth: 13.2, kind: "stain", tone: "graphite", opacity: 0.66, tilt: -0.04,
+    masses: [[0.35, -0.28, 0.45, 0.06, 1], [-0.95, 0.2, 0.35, 0.06, 0.8]] },
+  { depth: 12.4, kind: "stain", tone: "graphite", opacity: 0.2, grain: 2.2, stretch: 0.2, rough: 0.35, inner: 0.7, erase: 0.5,
+    masses: [[-0.25, -0.3, 1.4, 0.5, 1]] },
+  { depth: 11.6, kind: "stain", tone: "charcoal", opacity: 0.68, stretch: 0.09,
+    masses: [[-0.45, -0.03, 0.75, 0.05, 1]] },
+  { depth: 10.3, kind: "veil", opacity: 0.6, cut: [-0.94, 0.34, -0.3],
+    masses: [[0.4, 0.2, 0.45, 0.3, 1], [-0.55, -0.34, 0.35, 0.2, 0.8]] },
+  { depth: 9, kind: "stain", tone: "graphite", opacity: 0.7, tilt: 0.05,
+    masses: [[0.85, 0.3, 0.4, 0.08, 1]] },
+  { depth: 8, kind: "stain", tone: "ink", opacity: 1, inner: 0.3, erase: 0.2, cut: [0.05, -1, 0.02],
+    masses: [[-0.75, -0.14, 0.55, 0.13, 1]] },
+  { depth: 7, kind: "veil", opacity: 0.7, cut: [0.97, -0.24, -0.16],
+    masses: [[-0.34, 0.06, 0.45, 0.28, 1]] },
+  { depth: 6, kind: "stain", tone: "graphite", opacity: 0.62, tilt: -0.03,
+    masses: [[-0.6, -0.04, 0.55, 0.16, 1], [0.95, 0.4, 0.35, 0.05, 0.7]] },
+  { depth: 5, kind: "stain", tone: "charcoal", opacity: 0.7,
+    masses: [[-0.9, -0.45, 0.45, 0.1, 1]] },
+  { depth: 4.3, kind: "veil", opacity: 0.78, cut: [0.18, -0.98, 0.3],
+    masses: [[-0.1, -0.2, 0.4, 0.45, 1], [-0.75, 0.55, 0.3, 0.2, 0.7]] }
+];
 
-  const VERBS = [
-    "forgets",
-    "delays",
-    "misplaces",
-    "measures",
-    "invents",
-    "repeats",
-    "folds",
-    "loses",
-    "shifts",
-    "returns",
-    "disappears",
-    "hesitates",
-    "remembers",
-    "interrupts",
-    "reverses"
-  ];
+// Sparse receding traces: [x, y] in view fractions at a depth. They nearly share a vanishing point, but not quite.
+const TRACES = [
+  { from: [-0.62, -0.42, 8], to: [-0.1, -0.16, 21], segments: [[0.05, 0.3], [0.42, 0.56], [0.72, 0.8]], opacity: 0.6 },
+  { from: [0.5, -0.5, 8.5], to: [0.14, -0.17, 19], segments: [[0.1, 0.36], [0.55, 0.66]], opacity: 0.5 },
+  { from: [0.8, 0.34, 9], to: [0.24, 0.1, 18], segments: [[0, 0.2], [0.34, 0.6]], opacity: 0.45 },
+  { from: [-0.92, 0.2, 9.5], to: [-0.4, 0.07, 15], segments: [[0.12, 0.44], [0.6, 0.72]], opacity: 0.45 },
+  { from: [0.05, -0.36, 11], to: [0.02, -0.12, 23], segments: [[0.2, 0.5]], opacity: 0.4 },
+  { from: [0.3, 0.29, 12], to: [0.64, 0.31, 12.6], segments: [[0, 0.3], [0.46, 0.86]], opacity: 0.38 }
+];
 
-  const OBJECTS = [
-    "the horizon",
-    "the room",
-    "the image",
-    "the shadow",
-    "the surface",
-    "the distance",
-    "the floor",
-    "the window",
-    "the corner",
-    "the map",
-    "the object",
-    "the eye",
-    "the blind spot",
-    "the edge",
-    "the field",
-    "silence",
-    "depth",
-    "perspective"
-  ];
+// Depth is legible, becomes uncertain, flattens, then forms again. Durations are loose so it never reads as a loop.
+const PHASES = {
+  legible: {
+    duration: [55, 85],
+    next: () => "uncertain",
+    target: { align: 0, drift: 0.1, fogFar: 24, nearFade: 1, veil: 0, trace: 1 }
+  },
+  uncertain: {
+    duration: [28, 42],
+    next: () => (Math.random() < 0.75 ? "flat" : "forming"),
+    target: { align: 0.2, drift: 1, fogFar: 32, nearFade: 0.85, veil: 0.25, trace: 0.4 }
+  },
+  flat: {
+    duration: [16, 28],
+    next: () => "forming",
+    target: { align: 0.92, drift: 0.45, fogFar: 60, nearFade: 0.55, veil: 0.1, trace: 0.05 }
+  },
+  forming: {
+    duration: [30, 46],
+    next: () => "legible",
+    target: { align: 0, drift: 0.15, fogFar: 22, nearFade: 1, veil: 0, trace: 0.8 }
+  }
+};
 
-  const QUALIFIERS = [
-    "in silence",
-    "inside the wall",
-    "near the horizon",
-    "against perspective",
-    "out of alignment",
-    "at the edge",
-    "behind the image",
-    "without depth",
-    "almost in focus",
-    "slightly aside"
-  ];
+const PARAM_TAU = { align: 9, drift: 14, fogFar: 14, nearFade: 14, veil: 14, trace: 12 };
 
-  const ADJECTIVES = [
-    "unfinished",
-    "borrowed",
-    "slow",
-    "misplaced",
-    "silent",
-    "accidental",
-    "folded",
-    "soft",
-    "distant",
-    "partial",
-    "unstable",
-    "shallow",
-    "hidden",
-    "reversed",
-    "almost visible"
-  ];
+const TEXT_CANVAS_WIDTH = 2048;
+const TEXT_CANVAS_HEIGHT = 128;
+const TEXT_FONT_PX = 64;
+const TEXT_FONT_FAMILY = 'ui-serif, Georgia, "Times New Roman", serif';
+const TEXT_MAX_OPACITY = 0.8;
+const TEXT_REGIONS = [
+  [0.12, 0.62, -0.62, -0.4],
+  [-0.72, -0.3, 0.4, 0.62],
+  [0.18, 0.66, 0.02, 0.14],
+  [-0.2, 0.25, 0.56, 0.7]
+];
 
-  const particles = [];
-  const textEvents = [];
-  const softFrames = softZones.map(() => ({ x: 0, y: 0, radius: 1 }));
+const SUBJECTS = [
+  "the room", "the wall", "the image", "the window", "the floor", "the corner",
+  "the horizon", "the surface", "the shadow", "the distance", "the memory", "the map",
+  "the object", "the eye", "the other eye", "the blind spot", "the edge", "the field"
+];
+
+const VERBS = [
+  "forgets", "delays", "misplaces", "measures", "invents", "repeats", "folds", "loses",
+  "shifts", "returns", "disappears", "hesitates", "remembers", "interrupts", "reverses"
+];
+
+const OBJECTS = [
+  "the horizon", "the room", "the image", "the shadow", "the surface", "the distance",
+  "the floor", "the window", "the corner", "the map", "the object", "the eye",
+  "the blind spot", "the edge", "the field", "silence", "depth", "perspective"
+];
+
+const QUALIFIERS = [
+  "in silence", "inside the wall", "near the horizon", "against perspective", "out of alignment",
+  "at the edge", "behind the image", "without depth", "almost in focus", "slightly aside"
+];
+
+const ADJECTIVES = [
+  "unfinished", "borrowed", "slow", "misplaced", "silent", "accidental", "folded", "soft",
+  "distant", "partial", "unstable", "shallow", "hidden", "reversed", "almost visible"
+];
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function lerp(start, end, amount) {
+  return start + (end - start) * amount;
+}
+
+function smoothstep(edge0, edge1, value) {
+  const x = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function pick(bank) {
+  return bank[Math.floor(Math.random() * bank.length)];
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+
+  return function random() {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function createNoise(seed) {
+  const random = mulberry32(seed);
+  const source = new Uint8Array(256);
+  const perm = new Uint8Array(512);
+  const gradX = new Float32Array(256);
+  const gradY = new Float32Array(256);
+
+  for (let i = 0; i < 256; i += 1) source[i] = i;
+  for (let i = 255; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    const swap = source[i];
+    source[i] = source[j];
+    source[j] = swap;
+  }
+  for (let i = 0; i < 512; i += 1) perm[i] = source[i & 255];
+  for (let i = 0; i < 256; i += 1) {
+    const angle = random() * TAU;
+    gradX[i] = Math.cos(angle);
+    gradY[i] = Math.sin(angle);
+  }
+
+  // 2D gradient noise, roughly -0.7..0.7.
+  return function noise(x, y) {
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const xi = x0 & 255;
+    const yi = y0 & 255;
+    const fx = x - x0;
+    const fy = y - y0;
+    const g00 = perm[xi + perm[yi]];
+    const g10 = perm[xi + 1 + perm[yi]];
+    const g01 = perm[xi + perm[yi + 1]];
+    const g11 = perm[xi + 1 + perm[yi + 1]];
+    const n00 = gradX[g00] * fx + gradY[g00] * fy;
+    const n10 = gradX[g10] * (fx - 1) + gradY[g10] * fy;
+    const n01 = gradX[g01] * fx + gradY[g01] * (fy - 1);
+    const n11 = gradX[g11] * (fx - 1) + gradY[g11] * (fy - 1);
+    const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+    const v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+    const bottom = n00 + u * (n10 - n00);
+    const top = n01 + u * (n11 - n01);
+
+    return bottom + v * (top - bottom);
+  };
+}
+
+const noise = createNoise(19);
+
+// Octaves are rotated against each other so no grid direction survives.
+function fbm(x, y, octaves) {
+  let sum = 0;
+  let amp = 0.5;
+  let norm = 0;
+
+  for (let octave = 0; octave < octaves; octave += 1) {
+    sum += amp * noise(x, y);
+    norm += amp;
+    const nx = x * 1.6 - y * 1.2 + 3.1;
+    const ny = x * 1.2 + y * 1.6 + 1.7;
+    x = nx;
+    y = ny;
+    amp *= 0.5;
+  }
+
+  return (sum / norm) * 1.4;
+}
+
+function composition(masses, x, y) {
+  let value = 0;
+
+  for (let index = 0; index < masses.length; index += 1) {
+    const [mx, my, rx, ry, weight] = masses[index];
+    const dx = (x - mx) / rx;
+    const dy = (y - my) / ry;
+    value = Math.max(value, weight * Math.exp(-(dx * dx + dy * dy)));
+  }
+
+  return value;
+}
+
+function edgeFade(unit) {
+  return smoothstep(0, 0.14, unit) * smoothstep(0, 0.14, 1 - unit);
+}
+
+// Washed charcoal / erasure density, stored as an alpha map.
+// Noise is sampled in world units, so deeper layers carry finer detail on screen (a texture gradient cue).
+// Layers away from the fixation depth are generated softer and at lower resolution: focus as a depth cue.
+function residueTexture(spec, aspect) {
+  const focusBlur = clamp(Math.abs(spec.depth - FIXATION_DEPTH) / FIXATION_DEPTH, 0, 1);
+  const height = spec.kind === "veil" && !spec.cut ? 200 : Math.round(lerp(420, 220, clamp(focusBlur * 1.2, 0, 1)));
+  const width = Math.max(64, Math.round(height * aspect));
+  const data = new Uint8Array(width * height * 4);
+  const freq = spec.grain * (spec.depth / FIXATION_DEPTH);
+  const edge = spec.edge + focusBlur * 0.16;
+  const cosA = Math.cos(spec.tilt);
+  const sinA = Math.sin(spec.tilt);
+  const offsetX = spec.depth * 17.3;
+  const offsetY = spec.depth * -11.9;
+  // On narrow screens the composition keeps its proportions and is cropped rather than squeezed.
+  const compose = Math.pow(aspect / NOMINAL_ASPECT, 0.4);
+
+  for (let j = 0; j < height; j += 1) {
+    const v = (j + 0.5) / height;
+    const fadeY = edgeFade(v);
+    const y = (v - 0.5) * 2 * COVER;
+
+    for (let i = 0; i < width; i += 1) {
+      const k = (j * width + i) * 4;
+      const u = (i + 0.5) / width;
+      const fade = fadeY * edgeFade(u);
+      const x = (u - 0.5) * 2 * COVER;
+
+      data[k + 3] = 255;
+      if (fade <= 0 || composition(spec.masses, x * compose, y) < 0.004) continue;
+
+      const px = x * aspect * freq;
+      const py = y * freq;
+      const rx = (px * cosA - py * sinA) * spec.stretch + offsetX;
+      const ry = px * sinA + py * cosA + offsetY;
+      const warpX = fbm(rx + 1.7, ry + 9.2, 3);
+      const warpY = fbm(rx + 8.3, ry + 2.8, 3);
+
+      // Masses only set how much residue a region holds; they never draw an outline.
+      // Edges come from the internal strata, so nothing reads as a bounded object.
+      const mass = composition(spec.masses, (x + warpX * 0.16) * compose, y + warpY * 0.07);
+      const body = fbm(rx + warpX * spec.warp, ry + warpY * spec.warp, 5);
+
+      // Edge quality wanders: pressed charcoal in places, feathered wash in others.
+      const edgeHere = edge * lerp(0.2, 1.8, smoothstep(-0.45, 0.45, fbm(rx * 0.55 + 9.1, ry * 0.55 - 4.3, 2)));
+      const coverage = lerp(-0.45, 0.8, mass);
+      let alpha = smoothstep(-edgeHere, edgeHere, body * spec.rough + coverage) * smoothstep(0.03, 0.6, mass);
+
+      if (spec.cut) {
+        const [nx, ny, offset] = spec.cut;
+        const along = nx * x + ny * y - offset + warpY * 0.07 + warpX * 0.03;
+        const soft = 0.02 + focusBlur * 0.04 + 0.03 * smoothstep(-0.3, 0.5, warpX);
+        alpha *= smoothstep(-soft, soft, along);
+      }
+
+      if (alpha <= 0.002) continue;
+
+      const density = fbm(rx * 2.1 + 5.1, ry * 3.4 - 3.3, 3);
+      alpha *= 1 - spec.inner + spec.inner * smoothstep(-0.55, 0.6, density);
+
+      if (spec.erase > 0) {
+        const wipe = fbm(rx * 0.4 + 2.2, ry * 6.5, 3);
+        alpha *= 1 - spec.erase * smoothstep(0.1, 0.55, wipe);
+      }
+
+      alpha *= 0.88 + 0.12 * noise(rx * 9.7, ry * 9.7) * 1.4;
+
+      const value = clamp(Math.round(alpha * fade * 255), 0, 255);
+      data[k] = value;
+      data[k + 1] = value;
+      data[k + 2] = value;
+    }
+  }
+
+  const texture = new DataTexture(data, width, height, RGBAFormat);
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+
+  return texture;
+}
+
+// Soft-ended, slightly uneven hairline profile shared by every trace segment.
+function traceTexture() {
+  const width = 8;
+  const height = 256;
+  const data = new Uint8Array(width * height * 4);
+
+  for (let j = 0; j < height; j += 1) {
+    const v = (j + 0.5) / height;
+    const along = smoothstep(0, 0.18, v) * smoothstep(0, 0.24, 1 - v) * (0.72 + 0.28 * (fbm(v * 7.3, 4.1, 3) * 0.5 + 0.5));
+
+    for (let i = 0; i < width; i += 1) {
+      const across = 1 - Math.abs((i + 0.5) / width - 0.5) * 2;
+      const value = Math.round(clamp(along * smoothstep(0, 0.7, across), 0, 1) * 255);
+      const k = (j * width + i) * 4;
+      data[k] = value;
+      data[k + 1] = value;
+      data[k + 2] = value;
+      data[k + 3] = 255;
+    }
+  }
+
+  const texture = new DataTexture(data, width, height, RGBAFormat);
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+
+  return texture;
+}
+
+function generateSentence() {
+  const template = Math.floor(Math.random() * 12);
+
+  if (template === 0) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)}`;
+  if (template === 1) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)} ${pick(QUALIFIERS)}`;
+  if (template === 2) return `${pick(ADJECTIVES)} ${pick(OBJECTS)}`;
+  if (template === 3) return `${pick(OBJECTS)} without ${pick(OBJECTS)}`;
+  if (template === 4) return `${pick(SUBJECTS)} inside ${pick(OBJECTS)}`;
+  if (template === 5) return `${pick(SUBJECTS)} remembers ${pick(OBJECTS)}`;
+  if (template === 6) return `${pick(SUBJECTS)} arrives in reverse`;
+  if (template === 7) return `${pick(OBJECTS)} against perspective`;
+  if (template === 8) return `${pick(SUBJECTS)} almost remembers perspective`;
+  if (template === 9) return `${pick(OBJECTS)} almost in focus`;
+  if (template === 10) return `${pick(SUBJECTS)} without depth`;
+  return `${pick(OBJECTS)} at the edge of ${pick(OBJECTS)}`;
+}
+
+function viewPoint(fx, fy, depth, aspect) {
+  return new Vector3(fx * HALF_TAN * depth * aspect, fy * HALF_TAN * depth, -depth);
+}
+
+let renderer;
+
+try {
+  renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: "low-power" });
+} catch (error) {
+  canvas.dataset.webgl = "unavailable";
+}
+
+if (renderer) {
+  const scene = new Scene();
+  const camera = new PerspectiveCamera(FOV, 1, 0.1, 80);
+  const fog = new Fog(TONE.field, FOG_NEAR, PHASES.forming.target.fogFar);
+  const plane = new PlaneGeometry(1, 1);
+  const fixation = new Vector3(0, 0, -FIXATION_DEPTH);
+  const fixationTarget = fixation.clone();
+  const fixationEase = fixation.clone();
+  const basis = new Matrix4();
 
   const state = {
     width: 1,
     height: 1,
-    dpr: 1,
-    time: 0,
-    lastTime: 0,
+    aspect: NOMINAL_ASPECT,
+    textureAspect: 0,
+    reducedMotion: reducedMotionQuery.matches,
+    time: rand(0, 400),
+    phase: "forming",
+    phaseRemaining: rand(...PHASES.forming.duration),
+    params: { ...PHASES.forming.target, fogFar: 18 },
+    fixationRemaining: rand(18, 34),
+    buildQueue: [],
+    ready: false,
     animationId: 0,
     resizeId: 0,
-    particleCount: 0,
-    systemAX: 0.5,
-    systemAY: 0.5,
-    systemBX: 0.5,
-    systemBY: 0.5,
-    perception: 1.04,
-    instability: 0.52,
-    motionDepth: true,
-    reducedMotion: reducedMotionQuery.matches,
-    textFont: "15px ui-serif, Georgia, serif",
-    textIndex: 0,
-    textElapsed: 0
+    lastFrame: 0
   };
 
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
-
-  function lerp(start, end, amount) {
-    return start + (end - start) * amount;
-  }
-
-  function easeInOut(value) {
-    return value < 0.5
-      ? 2 * value * value
-      : 1 - Math.pow(-2 * value + 2, 2) / 2;
-  }
-
-  function rand(min, max) {
-    return min + Math.random() * (max - min);
-  }
-
-  function seededUnit(seed) {
-    const value = Math.sin(seed * 12.9898) * 43758.5453;
-
-    return value - Math.floor(value);
-  }
-
-  function temporalInstability(seed) {
-    return clamp(
-      0.5 +
-        Math.sin(state.time * 0.43 + seed) * 0.28 +
-        Math.sin(state.time * 1.37 + seed * 0.41) * 0.14 +
-        Math.sin(state.time * 2.7 + seed * 0.17) * 0.06,
-      0,
-      1
-    );
-  }
-
-  function pick(bank) {
-    return bank[Math.floor(Math.random() * bank.length)];
-  }
-
-  function updateSoftFrames() {
-    const scale = Math.min(state.width, state.height);
-
-    for (let index = 0; index < softZones.length; index += 1) {
-      const zone = softZones[index];
-      const frame = softFrames[index];
-
-      frame.x = (zone.x + Math.cos(state.time * 0.021 + zone.phase) * zone.driftX) * state.width;
-      frame.y = (zone.y + Math.sin(state.time * 0.017 + zone.phase * 1.3) * zone.driftY) * state.height;
-      frame.radius = zone.radius * scale;
-    }
-  }
-
-  function zoneSoftness(x, y, frame) {
-    const dx = x - frame.x;
-    const dy = y - frame.y;
-    const distance = Math.sqrt(dx * dx + dy * dy) / frame.radius;
-
-    if (distance >= 1) return 0;
-
-    return easeInOut(1 - distance);
-  }
-
-  function softnessAt(x, y) {
-    let softness = 0;
-
-    for (let index = 0; index < softZones.length; index += 1) {
-      softness = Math.max(softness, zoneSoftness(x, y, softFrames[index]));
-    }
-
-    return softness;
-  }
-
-  function generateSentence() {
-    const template = Math.floor(Math.random() * 12);
-
-    if (template === 0) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)}`;
-    if (template === 1) {
-      return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)} ${pick(QUALIFIERS)}`;
-    }
-    if (template === 2) return `${pick(ADJECTIVES)} ${pick(OBJECTS)}`;
-    if (template === 3) return `${pick(OBJECTS)} without ${pick(OBJECTS)}`;
-    if (template === 4) return `${pick(SUBJECTS)} inside ${pick(OBJECTS)}`;
-    if (template === 5) return `${pick(SUBJECTS)} remembers ${pick(OBJECTS)}`;
-    if (template === 6) return `${pick(SUBJECTS)} arrives in reverse`;
-    if (template === 7) return `${pick(OBJECTS)} against perspective`;
-    if (template === 8) return `${pick(SUBJECTS)} almost remembers perspective`;
-    if (template === 9) return `${pick(OBJECTS)} almost in focus`;
-    if (template === 10) return `${pick(SUBJECTS)} without depth`;
-    return `${pick(OBJECTS)} at the edge of ${pick(OBJECTS)}`;
-  }
-
-  function randomTextWait() {
-    return Math.random() < 0.14 ? rand(30, 40) : rand(8, 24);
-  }
-
-  function randomTextX() {
-    if (Math.random() < 0.68) {
-      return Math.random() < 0.5 ? rand(0.12, 0.38) : rand(0.62, 0.88);
-    }
-
-    return rand(0.16, 0.84);
-  }
-
-  function randomTextY() {
-    if (Math.random() < 0.58) {
-      return Math.random() < 0.5 ? rand(0.15, 0.36) : rand(0.62, 0.8);
-    }
-
-    return rand(0.18, 0.78);
-  }
-
-  function createParticle() {
-    const depth = Math.pow(rand(0.04, 1), 1.48);
-    const plane = Math.floor(rand(0, 5));
-    const horizonPull = 1 - depth;
-    const planeY = 0.23 + plane * 0.13 + rand(-0.032, 0.032);
-    const baseX = lerp(
-      0.5 + rand(-0.2, 0.2) * horizonPull,
-      rand(0.07, 0.93),
-      0.42 + depth * 0.48
-    );
-    const baseY = clamp(
-      lerp(0.48 + rand(-0.045, 0.045) * horizonPull, planeY, 0.48 + depth * 0.45),
-      0.08,
-      0.92
-    );
+  const layers = LAYERS.map((source, index) => {
+    const spec = { ...(source.kind === "veil" ? VEIL : STAIN), ...source };
+    const material = new MeshBasicMaterial({
+      color: new Color(source.kind === "veil" ? TONE.field : TONE[source.tone]),
+      transparent: true,
+      depthWrite: false,
+      opacity: 0
+    });
+    const mesh = new Mesh(plane, material);
+    mesh.visible = false;
+    scene.add(mesh);
 
     return {
-      baseX,
-      baseY,
-      x: baseX + rand(-0.018, 0.018),
-      y: baseY + rand(-0.018, 0.018),
-      depth,
-      plane,
-      phase: rand(0, TAU),
-      speed: lerp(0.022, 0.085, depth),
-      radius: lerp(0.58, 2.12, depth),
-      driftX: rand(0.006, 0.024) * lerp(0.35, 1, depth),
-      driftY: rand(0.004, 0.018) * lerp(0.3, 0.9, depth),
-      lineBias: Math.random(),
-      x1: 0,
-      y1: 0,
-      x2: 0,
-      y2: 0
+      spec,
+      mesh,
+      material,
+      appear: 0,
+      seed: index * 2.39 + 0.7,
+      driftRate: rand(0.8, 1.25)
     };
-  }
+  });
 
-  function createTextEvents() {
-    const fontSize = state.width < 520 ? 12 : 13;
-    state.textFont = `${fontSize}px ui-serif, Georgia, serif`;
-    ctx.font = state.textFont;
-    textEvents.length = 0;
+  const traceMap = traceTexture();
+  const traceSegments = [];
 
-    for (let index = 0; index < TEXT_EVENT_COUNT; index += 1) {
-      const text = generateSentence();
-      textEvents.push({
-        text,
-        width: ctx.measureText(text).width,
-        x: randomTextX(),
-        y: randomTextY(),
-        wait: randomTextWait(),
-        fadeIn: rand(4.8, 8.2),
-        hold: rand(0.2, 1.5),
-        fadeOut: rand(5.8, 9.8),
-        alpha: rand(0.045, 0.095)
+  for (let index = 0; index < TRACES.length; index += 1) {
+    const trace = TRACES[index];
+
+    for (let s = 0; s < trace.segments.length; s += 1) {
+      const material = new MeshBasicMaterial({
+        color: new Color(TONE.trace),
+        alphaMap: traceMap,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0
+      });
+      const mesh = new Mesh(plane, material);
+      scene.add(mesh);
+      traceSegments.push({
+        trace,
+        range: trace.segments[s],
+        mesh,
+        material,
+        rateA: TAU / rand(40, 80),
+        rateB: TAU / rand(90, 150),
+        phaseA: rand(0, TAU),
+        phaseB: rand(0, TAU)
       });
     }
-
-    state.textIndex = 0;
-    state.textElapsed = 0;
   }
 
-  function targetParticleCount() {
-    return state.width <= MOBILE_BREAKPOINT ? MAX_MOBILE_PARTICLES : MAX_DESKTOP_PARTICLES;
+  const textCanvas = document.createElement("canvas");
+  textCanvas.width = TEXT_CANVAS_WIDTH;
+  textCanvas.height = TEXT_CANVAS_HEIGHT;
+  const textContext = textCanvas.getContext("2d");
+  const textTexture = new CanvasTexture(textCanvas);
+  textTexture.minFilter = LinearMipmapLinearFilter;
+  const textMaterial = new MeshBasicMaterial({
+    color: new Color(TONE.text),
+    alphaMap: textTexture,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0
+  });
+  const textMesh = new Mesh(plane, textMaterial);
+  textMesh.visible = false;
+  scene.add(textMesh);
+
+  const text = {
+    stage: "wait",
+    elapsed: 0,
+    wait: rand(26, 40),
+    fadeIn: 0,
+    hold: 0,
+    fadeOut: 0,
+    depth: 6,
+    fx: 0,
+    fy: 0,
+    fontPx: TEXT_FONT_PX,
+    measured: 0,
+    base: new Vector3()
+  };
+
+  scene.fog = fog;
+  renderer.setClearColor(TONE.field, 1);
+  textTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  function queueTextures() {
+    state.textureAspect = state.aspect;
+    state.buildQueue = layers.slice();
   }
 
-  function rebuildParticles() {
-    state.particleCount = targetParticleCount();
-    particles.length = 0;
+  function buildNextTexture() {
+    const layer = state.buildQueue.shift();
+    if (!layer) return;
 
-    for (let index = 0; index < state.particleCount; index += 1) {
-      particles.push(createParticle());
+    const previous = layer.material.alphaMap;
+    layer.material.alphaMap = residueTexture(layer.spec, state.textureAspect);
+    layer.material.needsUpdate = !previous;
+    layer.mesh.visible = true;
+    if (previous) previous.dispose();
+    if (!state.buildQueue.length) state.ready = true;
+  }
+
+  function layoutTraces() {
+    const cameraAtRest = new Vector3(0, 0, 0);
+
+    for (let index = 0; index < traceSegments.length; index += 1) {
+      const segment = traceSegments[index];
+      const from = viewPoint(segment.trace.from[0], segment.trace.from[1], segment.trace.from[2], NOMINAL_ASPECT);
+      const to = viewPoint(segment.trace.to[0], segment.trace.to[1], segment.trace.to[2], NOMINAL_ASPECT);
+      const start = from.clone().lerp(to, segment.range[0]);
+      const end = from.clone().lerp(to, segment.range[1]);
+      const mid = start.clone().add(end).multiplyScalar(0.5);
+      const dir = end.clone().sub(start);
+      const length = dir.length();
+      dir.normalize();
+      const normal = cameraAtRest.clone().sub(mid);
+      normal.sub(dir.clone().multiplyScalar(normal.dot(dir))).normalize();
+      const side = dir.clone().cross(normal);
+      const distance = -mid.z;
+
+      basis.makeBasis(side, dir, normal);
+      segment.mesh.quaternion.setFromRotationMatrix(basis);
+      segment.mesh.position.copy(mid);
+      segment.mesh.scale.set(0.0058 * (1 + 0.3 * (distance / 10)), length, 1);
     }
   }
 
-  function resizeCanvas() {
-    const nextWidth = Math.max(320, window.innerWidth);
-    const nextHeight = Math.max(320, window.innerHeight);
-    const nextDpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-
+  function resize() {
     state.resizeId = 0;
-    state.width = nextWidth;
-    state.height = nextHeight;
-    state.dpr = state.reducedMotion ? 1 : nextDpr;
+    state.width = Math.max(320, window.innerWidth);
+    state.height = Math.max(320, window.innerHeight);
+    state.aspect = state.width / state.height;
 
-    canvas.width = Math.round(state.width * state.dpr);
-    canvas.height = Math.round(state.height * state.dpr);
-    canvas.style.width = `${state.width}px`;
-    canvas.style.height = `${state.height}px`;
-    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    renderer.setPixelRatio(state.reducedMotion ? 1 : Math.min(window.devicePixelRatio || 1, MAX_DPR));
+    renderer.setSize(state.width, state.height, false);
+    camera.aspect = state.aspect;
+    camera.updateProjectionMatrix();
 
-    rebuildParticles();
-    createTextEvents();
+    for (let index = 0; index < layers.length; index += 1) {
+      const depth = layers[index].spec.depth;
+      layers[index].mesh.scale.set(2 * HALF_TAN * depth * state.aspect * COVER, 2 * HALF_TAN * depth * COVER, 1);
+    }
 
-    canvas.dataset.particles = String(state.particleCount);
-    canvas.dataset.dpr = String(state.dpr);
-    canvas.dataset.safeMode = "true";
+    if (!state.textureAspect || Math.abs(Math.log(state.aspect / state.textureAspect)) > Math.log(1.3)) {
+      queueTextures();
+    }
 
-    drawStillFrame();
+    if (text.stage !== "wait") placeSentence();
+
+    canvas.dataset.dpr = String(renderer.getPixelRatio());
+    renderStill();
   }
 
   function scheduleResize() {
     if (state.resizeId) return;
-    state.resizeId = window.requestAnimationFrame(resizeCanvas);
+    state.resizeId = window.requestAnimationFrame(resize);
   }
 
-  function clearField() {
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = FIELD_COLOR;
-    ctx.fillRect(0, 0, state.width, state.height);
+  function textWorldScale(depth) {
+    const fontPx = clamp(state.height * 0.018, 14, 34);
+    return (fontPx * 2 * depth * HALF_TAN) / state.height / text.fontPx;
   }
 
-  function drawSoftWash(strength) {
-    for (let index = 0; index < softZones.length; index += 1) {
-      const zone = softZones[index];
-      const frame = softFrames[index];
-      const flicker = temporalInstability(zone.phase);
-      const radius = frame.radius * lerp(0.72, 1.08, flicker);
-      const alpha = zone.wash * strength * lerp(0.58, 1.18, flicker);
-      const gradient = ctx.createRadialGradient(frame.x, frame.y, 0, frame.x, frame.y, radius);
+  function drawSentence(sentence) {
+    text.fontPx = TEXT_FONT_PX;
+    textContext.font = `400 ${text.fontPx}px ${TEXT_FONT_FAMILY}`;
+    text.measured = textContext.measureText(sentence).width;
 
-      gradient.addColorStop(0, "rgba(243, 240, 232, 0.52)");
-      gradient.addColorStop(0.62, "rgba(243, 240, 232, 0.18)");
-      gradient.addColorStop(1, "rgba(243, 240, 232, 0)");
-
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = gradient;
-      ctx.fillRect(frame.x - radius, frame.y - radius, radius * 2, radius * 2);
+    if (text.measured > TEXT_CANVAS_WIDTH - 96) {
+      text.fontPx = Math.floor((TEXT_FONT_PX * (TEXT_CANVAS_WIDTH - 96)) / text.measured);
+      textContext.font = `400 ${text.fontPx}px ${TEXT_FONT_FAMILY}`;
+      text.measured = textContext.measureText(sentence).width;
     }
 
-    ctx.globalAlpha = 1;
+    textContext.fillStyle = "#000";
+    textContext.fillRect(0, 0, TEXT_CANVAS_WIDTH, TEXT_CANVAS_HEIGHT);
+    textContext.fillStyle = "#fff";
+    textContext.textAlign = "center";
+    textContext.textBaseline = "middle";
+    textContext.fillText(sentence, TEXT_CANVAS_WIDTH / 2, TEXT_CANVAS_HEIGHT / 2);
+    textTexture.needsUpdate = true;
   }
 
-  function drawExposureVeil() {
-    const flicker = temporalInstability(8.4);
-    const alpha = (state.reducedMotion ? 0.004 : 0.007) + flicker * (state.reducedMotion ? 0.003 : 0.007);
+  function placeSentence() {
+    const scale = textWorldScale(text.depth);
+    const halfWidth = HALF_TAN * text.depth * state.aspect;
+    const halfHeight = HALF_TAN * text.depth;
+    const halfText = (text.measured * scale) / 2 / halfWidth;
+    const fx = clamp(text.fx, -0.9 + halfText, 0.9 - halfText);
 
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = FIELD_COLOR;
-    ctx.fillRect(0, 0, state.width, state.height);
-    ctx.globalAlpha = 1;
+    textMesh.scale.set(TEXT_CANVAS_WIDTH * scale, TEXT_CANVAS_HEIGHT * scale, 1);
+    text.base.set(fx * halfWidth, text.fy * halfHeight, -text.depth);
   }
 
-  function drawDepthBands() {
-    const scale = Math.min(state.width, state.height);
+  function beginSentence() {
+    const region = pick(TEXT_REGIONS);
 
-    for (let index = 0; index < depthBands.length; index += 1) {
-      const band = depthBands[index];
-      const flicker = temporalInstability(band.phase + index * 1.7);
-      const x =
-        (band.x + Math.cos(state.time * 0.018 + band.phase) * band.driftX) * state.width;
-      const y =
-        (band.y + Math.sin(state.time * 0.015 + band.phase * 1.2) * band.driftY) * state.height;
-      const width = band.width * Math.max(state.width, state.height);
-      const height = band.height * scale * lerp(0.86, 1.18, flicker);
-      const gradient = ctx.createLinearGradient(0, -height * 0.5, 0, height * 0.5);
+    drawSentence(generateSentence());
+    text.depth = Math.random() < 0.18 ? rand(7.6, 8.6) : rand(5.2, 6.8);
+    text.fx = rand(region[0], region[1]);
+    text.fy = rand(region[2], region[3]);
+    text.fadeIn = rand(6, 9);
+    text.hold = rand(2.2, 4);
+    text.fadeOut = rand(7, 10);
+    text.stage = "in";
+    text.elapsed = 0;
+    placeSentence();
+    textMesh.visible = true;
+  }
 
-      gradient.addColorStop(0, "rgba(20, 20, 18, 0)");
-      gradient.addColorStop(0.28, "rgba(20, 20, 18, 0.08)");
-      gradient.addColorStop(0.52, "rgba(20, 20, 18, 0.18)");
-      gradient.addColorStop(0.74, "rgba(20, 20, 18, 0.07)");
-      gradient.addColorStop(1, "rgba(20, 20, 18, 0)");
+  function updateSentence(dt) {
+    text.elapsed += dt;
 
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(band.angle + Math.sin(state.time * 0.012 + band.phase) * 0.025);
-      ctx.globalAlpha = band.alpha * lerp(0.72, 1.22, flicker);
-      ctx.fillStyle = gradient;
-      ctx.fillRect(-width * 0.5, -height * 0.5, width, height);
-      ctx.restore();
+    if (text.stage === "wait") {
+      if (text.elapsed >= text.wait && state.ready) beginSentence();
+      return 0;
     }
 
-    ctx.globalAlpha = 1;
-  }
-
-  function updateSystems(delta) {
-    const scale = state.reducedMotion ? 0.32 : 1;
-    const ampX = state.reducedMotion ? 0.012 : 0.055;
-    const ampY = state.reducedMotion ? 0.008 : 0.038;
-    const time = state.time * scale;
-    const targetAX =
-      0.5 + Math.cos(time * 0.17) * ampX + Math.sin(time * 0.061 + 0.7) * ampX * 0.24;
-    const targetAY =
-      0.5 + Math.sin(time * 0.13 + 1.1) * ampY + Math.cos(time * 0.047) * ampY * 0.2;
-    const targetBX =
-      0.5 + Math.cos(time * 0.115 + 1.9) * ampX * 0.78 + Math.sin(time * 0.039) * ampX * 0.18;
-    const targetBY =
-      0.5 + Math.sin(time * 0.095 + 2.6) * ampY * 0.82 + Math.cos(time * 0.043 + 0.4) * ampY * 0.2;
-    const quick = clamp((state.reducedMotion ? 0.012 : 0.034) * delta, 0, 0.1);
-    const slow = clamp((state.reducedMotion ? 0.006 : 0.018) * delta, 0, 0.07);
-
-    state.systemAX += (targetAX - state.systemAX) * quick;
-    state.systemAY += (targetAY - state.systemAY) * quick;
-    state.systemBX += (targetBX - state.systemBX) * slow;
-    state.systemBY += (targetBY - state.systemBY) * slow;
-  }
-
-  function updateParticles(delta) {
-    const reduced = state.reducedMotion ? 0.15 : 1;
-    const drift = state.motionDepth ? reduced : reduced * 0.16;
-    const follow = clamp((state.reducedMotion ? 0.004 : 0.012) * delta, 0, 0.08);
-    const systemAParallax = state.motionDepth ? 0.12 : 0.035;
-    const systemBParallax = state.motionDepth ? 0.17 : 0.05;
-    const offsetX = lerp(1.4, 6.8, state.instability);
-    const offsetY = lerp(0.8, 4.4, state.instability);
-
-    for (let index = 0; index < state.particleCount; index += 1) {
-      const p = particles[index];
-      const phase = state.time * p.speed * drift + p.phase;
-      const targetX = p.baseX + Math.cos(phase) * p.driftX;
-      const targetY = p.baseY + Math.sin(phase * 1.21) * p.driftY;
-      const depthPush = p.depth - 0.5;
-
-      p.x += (targetX - p.x) * follow;
-      p.y += (targetY - p.y) * follow;
-
-      p.x1 = (p.x + (state.systemAX - 0.5) * systemAParallax * depthPush) * state.width;
-      p.y1 = (p.y + (state.systemAY - 0.5) * systemAParallax * depthPush) * state.height;
-      p.x2 =
-        (p.x + (state.systemBX - 0.5) * systemBParallax * depthPush) * state.width +
-        offsetX * (0.5 + p.depth);
-      p.y2 =
-        (p.y + (state.systemBY - 0.5) * systemBParallax * depthPush) * state.height +
-        offsetY * (1 - p.depth);
-    }
-  }
-
-  function addBrokenSegment(x1, y1, x2, y2, start, end) {
-    ctx.moveTo(lerp(x1, x2, start), lerp(y1, y2, start));
-    ctx.lineTo(lerp(x1, x2, end), lerp(y1, y2, end));
-  }
-
-  function drawResidueSmudge(x, y, span, depth, softness, phase, alpha, color) {
-    const instability = temporalInstability(phase + depth * 2.7);
-    const wash = softness * lerp(0.2, 0.74, temporalInstability(phase * 0.61 + depth));
-    const baseAlpha = clamp(alpha * lerp(0.58, 1.08, instability) * (1 - wash * 0.45), 0.004, 0.2);
-    const angle =
-      Math.sin(phase * 1.7 + state.time * 0.026) * 0.44 +
-      Math.sin(phase * 0.43) * 0.16;
-    const length = span * lerp(2.8, 6.2, seededUnit(phase + 1.7)) * lerp(0.78, 1.24, depth);
-    const spread = span * lerp(0.78, 1.66, seededUnit(phase + 4.1)) * (1 + softness * 0.64);
-    const layers = softness > 0.34 ? 5 : 4;
-
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineCap = "butt";
-
-    for (let layer = 0; layer < layers; layer += 1) {
-      const seed = phase + layer * 3.17;
-      const offsetY = (seededUnit(seed + 2.2) - 0.5) * spread;
-      const start = -length * lerp(0.3, 0.55, seededUnit(seed + 5.4));
-      const mid = start + length * lerp(0.22, 0.38, seededUnit(seed + 6.7));
-      const end = start + length * lerp(0.42, 0.72, seededUnit(seed + 7.9));
-      const bend = (seededUnit(seed + 9.1) - 0.5) * spread * 0.14;
-      const layerAlpha = baseAlpha * lerp(0.28, 0.72, seededUnit(seed + 10.6));
-
-      ctx.globalAlpha = layerAlpha;
-      ctx.lineWidth = clamp(span * lerp(0.16, 0.42, seededUnit(seed + 11.3)), 0.18, 1.05);
-      ctx.beginPath();
-      ctx.moveTo(start, offsetY);
-      ctx.lineTo(mid, offsetY + bend);
-      if (seededUnit(seed + 12.8) > 0.34) {
-        ctx.moveTo(mid + length * 0.08, offsetY + bend * 0.18);
-        ctx.lineTo(end, offsetY + bend * 0.36);
+    if (text.stage === "in") {
+      if (text.elapsed >= text.fadeIn) {
+        text.stage = "hold";
+        text.elapsed = 0;
+        return 1;
       }
-      ctx.stroke();
-
-      if (layer < 2) {
-        ctx.globalAlpha = layerAlpha * 0.34;
-        ctx.fillRect(
-          start + length * 0.12,
-          offsetY - ctx.lineWidth * 0.75,
-          length * lerp(0.12, 0.24, seededUnit(seed + 13.9)),
-          ctx.lineWidth * lerp(0.7, 1.5, seededUnit(seed + 15.1))
-        );
-      }
+      return smoothstep(0, 1, text.elapsed / text.fadeIn);
     }
 
-    ctx.restore();
+    if (text.stage === "hold") {
+      if (text.elapsed >= text.hold) {
+        text.stage = "out";
+        text.elapsed = 0;
+      }
+      return 1;
+    }
 
-    if (softness > 0.18) {
-      const offset = lerp(0.55, 1.65, softness);
+    if (text.elapsed >= text.fadeOut) {
+      text.stage = "wait";
+      text.elapsed = 0;
+      text.wait = Math.random() < 0.2 ? rand(55, 80) : rand(28, 50);
+      textMesh.visible = false;
+      return 0;
+    }
 
-      ctx.save();
-      ctx.translate(
-        x + Math.cos(phase + state.time * 0.08) * offset,
-        y + Math.sin(phase * 1.13 + state.time * 0.06) * offset
+    return 1 - smoothstep(0, 1, text.elapsed / text.fadeOut);
+  }
+
+  function updatePhase(dt) {
+    state.phaseRemaining -= dt;
+
+    if (state.phaseRemaining <= 0) {
+      state.phase = PHASES[state.phase].next();
+      state.phaseRemaining = rand(...PHASES[state.phase].duration);
+      canvas.dataset.phase = state.phase;
+    }
+
+    const target = PHASES[state.phase].target;
+
+    for (const key in target) {
+      state.params[key] += (target[key] - state.params[key]) * (1 - Math.exp(-dt / PARAM_TAU[key]));
+    }
+  }
+
+  // Continuous perceptual adjustment: small translation while holding a mid-depth fixation,
+  // with occasional slow re-fixation. Points nearer and farther than fixation drift in opposite directions.
+  function updateCamera(dt) {
+    const motion = state.reducedMotion ? 0.2 : 1;
+    const t = state.time;
+
+    camera.position.set(
+      motion * 0.17 * (0.62 * Math.sin((t * TAU) / 97 + 1.3) + 0.38 * Math.sin((t * TAU) / 173 + 4.1)),
+      motion * 0.07 * (0.6 * Math.sin((t * TAU) / 131 + 0.4) + 0.4 * Math.sin((t * TAU) / 229 + 2.2)),
+      motion * 0.32 * (0.7 * Math.sin((t * TAU) / 211 + 5) + 0.3 * Math.sin((t * TAU) / 317 + 0.9))
+    );
+
+    state.fixationRemaining -= dt;
+    if (state.fixationRemaining <= 0) {
+      state.fixationRemaining = rand(18, 40);
+      fixationTarget.set(rand(-0.25, 0.25) * motion, rand(-0.12, 0.12) * motion, -FIXATION_DEPTH + rand(-1.5, 1.5));
+    }
+
+    const ease = 1 - Math.exp(-dt / 5);
+    fixationEase.lerp(fixationTarget, ease);
+    fixation.lerp(fixationEase, ease);
+    camera.lookAt(fixation);
+  }
+
+  // Parallax compensation: at align = 1 every layer shifts and scales as if it sat on the fixation plane.
+  // The camera keeps moving, yet the volume reads flat.
+  function alignOffset(depth, target) {
+    const align = state.params.align;
+    const advance = camera.position.z;
+    const shift = align * (1 - depth / FIXATION_DEPTH);
+    const scale = lerp(1, (FIXATION_DEPTH * (depth + advance)) / (depth * (FIXATION_DEPTH + advance)), align);
+
+    target.x += camera.position.x * shift;
+    target.y += camera.position.y * shift;
+    return scale;
+  }
+
+  function updateLayers(dt) {
+    const drift = state.params.drift * (state.reducedMotion ? 0.25 : 1);
+    const t = state.time;
+
+    for (let index = 0; index < layers.length; index += 1) {
+      const layer = layers[index];
+      const { depth, kind, opacity } = layer.spec;
+      if (!layer.mesh.visible) continue;
+
+      layer.appear = Math.min(1, layer.appear + dt / 7);
+
+      const rate = layer.driftRate;
+      const position = layer.mesh.position;
+      position.set(
+        drift * 0.012 * depth * Math.sin((t * TAU * rate) / 47 + layer.seed),
+        drift * 0.006 * depth * Math.sin((t * TAU * rate) / 61 + layer.seed * 1.7),
+        -depth
       );
-      ctx.rotate(angle + 0.08);
-      ctx.strokeStyle = color;
-      ctx.lineCap = "butt";
-      ctx.globalAlpha = clamp(baseAlpha * softness * 0.38, 0.004, 0.05);
-      ctx.lineWidth = clamp(span * 0.28, 0.22, 0.9);
-      ctx.beginPath();
-      ctx.moveTo(-length * 0.34, (seededUnit(phase + 18.2) - 0.5) * spread * 0.44);
-      ctx.lineTo(length * 0.22, (seededUnit(phase + 19.6) - 0.5) * spread * 0.4);
-      ctx.stroke();
-      ctx.restore();
 
-      ctx.save();
-      ctx.translate(
-        x - Math.cos(phase * 0.83) * offset * 0.8,
-        y + Math.sin(phase * 0.71) * offset * 0.58
-      );
-      ctx.rotate(angle - 0.05);
-      ctx.strokeStyle = FIELD_COLOR;
-      ctx.fillStyle = FIELD_COLOR;
-      ctx.lineCap = "butt";
-      ctx.globalAlpha = clamp(softness * alpha * 0.24, 0.002, 0.044);
-      ctx.lineWidth = clamp(span * 0.24, 0.18, 0.72);
-      ctx.beginPath();
-      ctx.moveTo(-length * 0.38, 0);
-      ctx.lineTo(length * 0.3, (seededUnit(phase + 21.4) - 0.5) * spread * 0.3);
-      ctx.stroke();
-      ctx.globalAlpha *= 0.52;
-      ctx.fillRect(-length * 0.18, -ctx.lineWidth * 0.42, length * 0.34, ctx.lineWidth * 0.84);
-      ctx.restore();
+      const scale = alignOffset(depth, position) * (1 + drift * 0.015 * Math.sin((t * TAU * rate) / 71 + layer.seed * 0.6));
+      const coverX = 2 * HALF_TAN * depth * state.aspect * COVER;
+      const coverY = 2 * HALF_TAN * depth * COVER;
+      layer.mesh.scale.set(coverX * scale, coverY * scale, 1);
+
+      let alpha = opacity * smoothstep(0, 1, layer.appear);
+      alpha *= lerp(1, state.params.nearFade, clamp((7.5 - depth) / 3, 0, 1));
+      if (kind === "veil") alpha = Math.min(0.92, alpha * (1 + state.params.veil));
+      layer.material.opacity = alpha;
     }
-
-    ctx.globalAlpha = 1;
   }
 
-  function drawResidueCluster(x, y, span, depth, softness, phase, alpha, color) {
-    const clusterSoftness = clamp(softness + 0.18, 0, 1);
-    const clusterSpan = span * lerp(1.6, 2.8, depth);
-    const angle = Math.sin(phase * 0.58 + state.time * 0.018) * 0.18;
+  function updateTraces() {
+    const presence = state.ready ? state.params.trace : 0;
 
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.fillStyle = color;
-    ctx.strokeStyle = color;
-    ctx.lineCap = "butt";
-
-    for (let layer = 0; layer < 5; layer += 1) {
-      const seed = phase + layer * 5.31;
-      const offsetY = (seededUnit(seed + 1.1) - 0.5) * clusterSpan * 1.2;
-      const length = clusterSpan * lerp(2.2, 4.6, seededUnit(seed + 2.4));
-      const left = -length * lerp(0.3, 0.6, seededUnit(seed + 3.7));
-      const width = length * lerp(0.18, 0.44, seededUnit(seed + 4.9));
-      const height = clamp(clusterSpan * lerp(0.08, 0.22, seededUnit(seed + 6.2)), 0.28, 1.6);
-
-      ctx.globalAlpha = alpha * lerp(0.18, 0.42, seededUnit(seed + 7.5));
-      ctx.fillRect(left, offsetY, width, height);
-
-      ctx.globalAlpha *= 0.8;
-      ctx.lineWidth = height * lerp(0.7, 1.25, seededUnit(seed + 8.8));
-      ctx.beginPath();
-      ctx.moveTo(left - width * 0.24, offsetY + height * 0.5);
-      ctx.lineTo(left + width * 1.18, offsetY + height * (0.32 + seededUnit(seed + 9.9) * 0.36));
-      ctx.stroke();
+    for (let index = 0; index < traceSegments.length; index += 1) {
+      const segment = traceSegments[index];
+      const pulse =
+        0.6 * Math.sin(state.time * segment.rateA + segment.phaseA) +
+        0.4 * Math.sin(state.time * segment.rateB + segment.phaseB);
+      segment.material.opacity = segment.trace.opacity * presence * smoothstep(-0.1, 0.5, pulse);
+      segment.mesh.visible = segment.material.opacity > 0.003;
     }
-
-    ctx.restore();
-
-    if (clusterSoftness > 0.28) {
-      drawResidueSmudge(
-        x + Math.cos(phase) * clusterSpan * 0.2,
-        y + Math.sin(phase * 0.7) * clusterSpan * 0.12,
-        clusterSpan * 0.44,
-        depth,
-        clusterSoftness,
-        phase + 8.2,
-        alpha * 0.9,
-        color
-      );
-    }
-
-    ctx.globalAlpha = 1;
   }
 
-  function drawLines() {
-    const maxDistance = state.reducedMotion ? 118 : 165;
-    const maxDistanceSq = maxDistance * maxDistance;
-    const lineLimit = state.reducedMotion ? 4 : 9;
-    const vanishX = state.width * (0.5 + (state.systemAX - 0.5) * 0.18);
-    const vanishY = state.height * (0.52 + (state.systemAY - 0.5) * 0.12);
-    let lineCount = 0;
+  function updateText(dt) {
+    const envelope = updateSentence(dt);
+    if (!textMesh.visible) return;
 
-    ctx.strokeStyle = LINE_COLOR;
-    ctx.lineWidth = 0.45;
-
-    for (let i = 0; i < state.particleCount; i += 1) {
-      const a = particles[i];
-      if (a.lineBias < 0.58) continue;
-
-      for (let j = i + 1; j < state.particleCount; j += 1) {
-        if (((i * 17 + j * 31) % 11) !== 0) continue;
-
-        const b = particles[j];
-        if (a.plane !== b.plane) continue;
-
-        const depthGap = Math.abs(a.depth - b.depth);
-        if (depthGap > 0.32) continue;
-
-        const dx = a.x1 - b.x1;
-        const dy = a.y1 - b.y1;
-        const distanceSq = dx * dx + dy * dy;
-        if (distanceSq > maxDistanceSq) continue;
-
-        const seed = i * 12.9898 + j * 78.233;
-        const pulse = (Math.sin(state.time * 0.24 + seed) + 1) * 0.5;
-        if (pulse < 0.5) continue;
-
-        const depth = (a.depth + b.depth) * 0.5;
-        const fade = easeInOut((pulse - 0.5) / 0.5);
-        const distanceFade = 1 - distanceSq / maxDistanceSq;
-        const perspectivePull = lerp(0.018, 0.055, 1 - depth);
-        const ax = lerp(a.x1, vanishX, perspectivePull);
-        const ay = lerp(a.y1, vanishY, perspectivePull);
-        const bx = lerp(b.x1, vanishX, perspectivePull);
-        const by = lerp(b.y1, vanishY, perspectivePull);
-        const softness = softnessAt((ax + bx) * 0.5, (ay + by) * 0.5);
-        const temporalFade = lerp(0.46, 1, temporalInstability(seed));
-        const shift = Math.sin(seed * 0.37) * 0.035;
-
-        ctx.lineCap = "butt";
-        ctx.lineWidth = lerp(0.38, 0.78, softness);
-        ctx.globalAlpha =
-          fade * distanceFade * lerp(0.012, 0.064, depth) * (1 - softness * 0.62) * temporalFade;
-        ctx.beginPath();
-        addBrokenSegment(ax, ay, bx, by, 0.08, 0.24 + shift * 0.5);
-        if (pulse > 0.58) addBrokenSegment(ax, ay, bx, by, 0.42 - shift, 0.58);
-        if (depth > 0.58 && pulse > 0.68) addBrokenSegment(ax, ay, bx, by, 0.76, 0.9);
-        ctx.stroke();
-
-        if (softness > 0.14) {
-          const smear = softness * lerp(0.12, 0.32, temporalFade);
-
-          ctx.globalAlpha *= smear;
-          ctx.beginPath();
-          addBrokenSegment(ax + 0.9, ay - 0.54, bx + 0.9, by - 0.54, 0.1, 0.3 + shift * 0.4);
-          addBrokenSegment(ax - 0.76, ay + 0.44, bx - 0.76, by + 0.44, 0.48 - shift, 0.64);
-          ctx.stroke();
-
-          ctx.strokeStyle = FIELD_COLOR;
-          ctx.globalAlpha = clamp(softness * 0.016, 0.002, 0.02);
-          ctx.lineWidth = lerp(0.7, 1.5, softness);
-          ctx.beginPath();
-          addBrokenSegment(ax, ay, bx, by, 0.26, 0.38);
-          addBrokenSegment(ax, ay, bx, by, 0.62, 0.74);
-          ctx.stroke();
-          ctx.strokeStyle = LINE_COLOR;
-        }
-
-        lineCount += 1;
-        if (lineCount >= lineLimit) {
-          ctx.globalAlpha = 1;
-          return;
-        }
-      }
-    }
-
-    ctx.globalAlpha = 1;
+    const position = textMesh.position.copy(text.base);
+    const scale = alignOffset(text.depth, position);
+    const worldScale = textWorldScale(text.depth) * scale;
+    textMesh.scale.set(TEXT_CANVAS_WIDTH * worldScale, TEXT_CANVAS_HEIGHT * worldScale, 1);
+    textMaterial.opacity = TEXT_MAX_OPACITY * envelope;
   }
 
-  function drawSystemB() {
-    ctx.fillStyle = SECONDARY_MARK_COLOR;
+  function step(dt) {
+    const timeScale = state.reducedMotion ? 0.5 : 1;
 
-    for (let index = 0; index < state.particleCount; index += 1) {
-      const p = particles[index];
-      const unstable = 0.58 + Math.sin(state.time * 0.45 + p.phase) * 0.18;
-      const softness = softnessAt(p.x2, p.y2);
-      const dissolve = lerp(0.68, 1, temporalInstability(p.phase));
-      const alpha = (0.04 + state.instability * 0.024) * unstable * (1 - softness * 0.42) * dissolve;
-      const span = p.radius * lerp(1.8, 3.4 + softness * 0.7, p.depth);
-
-      drawResidueSmudge(p.x2, p.y2, span, p.depth, softness, p.phase + 1.4, alpha, SECONDARY_MARK_COLOR);
-
-      if (index % 4 === 0 || softness > 0.46) {
-        drawResidueCluster(
-          p.x2,
-          p.y2,
-          span * 1.05,
-          p.depth,
-          softness,
-          p.phase + 2.6,
-          alpha * 0.55,
-          SECONDARY_MARK_COLOR
-        );
-      }
-    }
-
-    ctx.globalAlpha = 1;
+    state.time += dt * timeScale;
+    updatePhase(dt);
+    fog.far = state.params.fogFar;
+    updateCamera(dt * timeScale);
+    updateLayers(dt);
+    updateTraces();
+    updateText(dt);
   }
 
-  function drawOcclusion() {
-    ctx.fillStyle = FIELD_COLOR;
-
-    for (let index = 0; index < state.particleCount; index += 1) {
-      const p = particles[index];
-      if (p.depth < 0.78 || p.lineBias < 0.42) continue;
-
-      drawResidueSmudge(
-        p.x1,
-        p.y1,
-        p.radius * lerp(3.8, 6.4, p.depth),
-        p.depth,
-        softnessAt(p.x1, p.y1),
-        p.phase + 5.6,
-        0.032,
-        FIELD_COLOR
-      );
-    }
-
-    ctx.globalAlpha = 1;
+  function renderStill() {
+    step(0);
+    renderer.render(scene, camera);
   }
 
-  function drawSystemA() {
-    ctx.fillStyle = MARK_COLOR;
+  function frame(now) {
+    state.animationId = window.requestAnimationFrame(frame);
 
-    for (let index = 0; index < state.particleCount; index += 1) {
-      const p = particles[index];
-      const softness = softnessAt(p.x1, p.y1);
-      const span = p.radius * lerp(1.8, 3.8 + softness * 0.9, p.depth);
-      const focus = lerp(0.74, 1.03, temporalInstability(p.phase + p.depth * 3));
-      const baseAlpha = lerp(0.12, 0.38, p.depth) * (1 - softness * 0.38) * focus;
+    const interval = state.reducedMotion ? 1000 / 20 : 1000 / 30;
+    const elapsed = now - state.lastFrame;
+    if (elapsed < interval - 2) return;
 
-      drawResidueSmudge(p.x1, p.y1, span, p.depth, softness, p.phase, baseAlpha, MARK_COLOR);
-
-      if (index % 3 === 0 || p.depth > 0.74) {
-        drawResidueCluster(
-          p.x1,
-          p.y1,
-          span * 1.12,
-          p.depth,
-          softness,
-          p.phase + 4.4,
-          baseAlpha * 0.46,
-          MARK_COLOR
-        );
-      }
-    }
-
-    ctx.globalAlpha = 1;
+    state.lastFrame = now;
+    if (state.buildQueue.length) buildNextTexture();
+    step(Math.min(elapsed, 100) / 1000);
+    renderer.render(scene, camera);
   }
 
-  function drawLanguage() {
-    const event = textEvents[state.textIndex];
-    if (!event) return;
-
-    let elapsed = state.textElapsed;
-    const visibleStart = event.wait;
-    const fadeInEnd = visibleStart + event.fadeIn;
-    const holdEnd = fadeInEnd + event.hold;
-    const fadeOutEnd = holdEnd + event.fadeOut;
-
-    while (elapsed > fadeOutEnd) {
-      elapsed -= fadeOutEnd;
-      state.textIndex = (state.textIndex + 1) % textEvents.length;
-      state.textElapsed = elapsed;
-      return;
-    }
-
-    if (elapsed < visibleStart) return;
-
-    let alpha = 0;
-    if (elapsed < fadeInEnd) {
-      alpha = easeInOut((elapsed - visibleStart) / event.fadeIn);
-    } else if (elapsed < holdEnd) {
-      alpha = 1;
-    } else {
-      alpha = easeInOut((fadeOutEnd - elapsed) / event.fadeOut);
-    }
-
-    const x = clamp(event.x * state.width, event.width / 2 + 20, state.width - event.width / 2 - 20);
-    const y = event.y * state.height;
-    const softness = softnessAt(x, y);
-    const flicker = lerp(0.76, 1, temporalInstability(event.width * 0.017));
-
-    ctx.font = state.textFont;
-    ctx.fillStyle = MARK_COLOR;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.globalAlpha = alpha * event.alpha * 1.28 * (1 - softness * 0.18) * flicker;
-    ctx.fillText(event.text, x, y);
-
-    if (softness > 0.36) {
-      ctx.globalAlpha = alpha * event.alpha * softness * 0.16;
-      ctx.fillText(event.text, x + 0.8, y - 0.55);
-    }
-
-    ctx.globalAlpha = 1;
-  }
-
-  function drawStillFrame() {
-    clearField();
-    updateParticles(1);
-    updateSoftFrames();
-    drawDepthBands();
-    drawSystemB();
-    drawLines();
-    drawOcclusion();
-    drawSoftWash(0.38);
-    drawSystemA();
-    drawSoftWash(0.08);
-    drawExposureVeil();
-    drawLanguage();
-  }
-
-  function drawFrame(now) {
-    if (document.hidden) {
-      state.animationId = 0;
-      return;
-    }
-
-    const rawDelta = state.lastTime ? Math.min(50, now - state.lastTime) : 16.667;
-    const delta = clamp(rawDelta / 16.667, 0.25, 3);
-    const timeScale = state.reducedMotion ? 0.25 : 0.72;
-
-    state.lastTime = now;
-    state.time += (rawDelta / 1000) * timeScale;
-    state.textElapsed += rawDelta / 1000;
-
-    updateSoftFrames();
-    updateSystems(delta);
-    updateParticles(delta);
-    clearField();
-    drawDepthBands();
-    drawSystemB();
-    drawLines();
-    drawOcclusion();
-    drawSoftWash(0.38);
-    drawSystemA();
-    drawSoftWash(0.08);
-    drawExposureVeil();
-    drawLanguage();
-
-    state.animationId = window.requestAnimationFrame(drawFrame);
-  }
-
-  function startAnimation() {
+  function start() {
     if (state.animationId || document.hidden) return;
-
-    state.lastTime = performance.now();
-    state.animationId = window.requestAnimationFrame(drawFrame);
+    state.lastFrame = performance.now();
+    state.animationId = window.requestAnimationFrame(frame);
   }
 
-  function stopAnimation() {
+  function stop() {
     if (!state.animationId) return;
-
     window.cancelAnimationFrame(state.animationId);
     state.animationId = 0;
   }
 
   function onVisibilityChange() {
-    if (document.hidden) {
-      stopAnimation();
-    } else {
-      state.lastTime = performance.now();
-      startAnimation();
-    }
+    if (document.hidden) stop();
+    else start();
   }
 
   function onMotionPreferenceChange() {
     state.reducedMotion = reducedMotionQuery.matches;
-    resizeCanvas();
+    resize();
   }
 
   if (typeof reducedMotionQuery.addEventListener === "function") {
@@ -924,9 +849,18 @@
     reducedMotionQuery.addListener(onMotionPreferenceChange);
   }
 
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    stop();
+  });
+  canvas.addEventListener("webglcontextrestored", start);
   window.addEventListener("resize", scheduleResize);
   document.addEventListener("visibilitychange", onVisibilityChange);
 
-  resizeCanvas();
-  startAnimation();
-})();
+  canvas.dataset.phase = state.phase;
+  canvas.dataset.layers = String(layers.length);
+  canvas.dataset.traces = String(traceSegments.length);
+  layoutTraces();
+  resize();
+  start();
+}

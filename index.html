@@ -9,10 +9,11 @@
       content="A browser-based artwork about constructing depth without relying on stereoscopic vision."
     >
     <title>Monocular Depth</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <main aria-label="Monocular Depth interactive artwork">
+    <main aria-label="Monocular Depth artwork">
       <canvas id="depth-field" aria-hidden="true"></canvas>
     </main>
 
@@ -20,6 +21,6 @@
       <p class="noscript">Monocular Depth needs JavaScript to draw its perceptual field.</p>
     </noscript>
 
-    <script src="main.js" defer></script>
+    <script type="module" src="main.js"></script>
   </body>
 </html>
