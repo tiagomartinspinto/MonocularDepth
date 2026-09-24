@@ -42,39 +42,42 @@ const TONE = {
   text: 0x3a3833
 };
 
-const STAIN = { grain: 7, stretch: 0.13, tilt: 0, warp: 1.3, rough: 0.75, edge: 0.07, inner: 0.6, erase: 0.35, cut: null };
-const VEIL = { grain: 3.2, stretch: 0.4, tilt: 0, warp: 1.4, rough: 0.6, edge: 0.18, inner: 0.3, erase: 0, cut: null };
+const STAIN = { grain: 11, stretch: 0.65, tilt: 0, warp: 0.6, rough: 0.6, edge: 0.2, inner: 0.5, erase: 0.1, cut: null };
+const VEIL = { grain: 3, stretch: 0.7, tilt: 0, warp: 1.4, rough: 0.6, edge: 0.18, inner: 0.3, erase: 0, cut: null };
 
-// Masses are [x, y, radiusX, radiusY, weight] in view fractions (-1..1) at each layer's depth: long strata, not objects.
+// Masses are [x, y, radiusX, radiusY, weight, angle?] in view fractions (-1..1) at each layer's depth.
+// Several unrelated depth concentrations, placed independently of screen height: near material sits high as well as low,
+// far material low as well as high, so the frame never settles into sky, horizon, and ground.
+// Each layer's grain runs in its own direction (tilt), so no shared horizontal dominates.
 // A cut is a wavering half-plane [normalX, normalY, offset] that gives an occluding edge without a visible rectangle.
 // Built far to near so that space assembles from the back.
 const LAYERS = [
-  { depth: 21, kind: "stain", tone: "ink", opacity: 0.8, stretch: 0.1, tilt: 0.015,
-    masses: [[-0.3, 0.1, 1.0, 0.05, 1], [0.7, 0.04, 0.3, 0.035, 0.8]] },
-  { depth: 17.5, kind: "stain", tone: "charcoal", opacity: 0.72,
-    masses: [[0.3, 0.02, 0.6, 0.07, 1], [-0.9, 0.28, 0.4, 0.05, 0.75]] },
-  { depth: 15.2, kind: "veil", opacity: 0.55,
-    masses: [[0.2, 0.08, 0.8, 0.35, 0.9]] },
-  { depth: 13.2, kind: "stain", tone: "graphite", opacity: 0.66, tilt: -0.04,
-    masses: [[0.35, -0.28, 0.45, 0.06, 1], [-0.95, 0.2, 0.35, 0.06, 0.8]] },
-  { depth: 12.4, kind: "stain", tone: "graphite", opacity: 0.2, grain: 2.2, stretch: 0.2, rough: 0.35, inner: 0.7, erase: 0.5,
-    masses: [[-0.25, -0.3, 1.4, 0.5, 1]] },
-  { depth: 11.6, kind: "stain", tone: "charcoal", opacity: 0.68, stretch: 0.09,
-    masses: [[-0.45, -0.03, 0.75, 0.05, 1]] },
-  { depth: 10.3, kind: "veil", opacity: 0.6, cut: [-0.94, 0.34, -0.3],
-    masses: [[0.4, 0.2, 0.45, 0.3, 1], [-0.55, -0.34, 0.35, 0.2, 0.8]] },
-  { depth: 9, kind: "stain", tone: "graphite", opacity: 0.7, tilt: 0.05,
-    masses: [[0.85, 0.3, 0.4, 0.08, 1]] },
-  { depth: 8, kind: "stain", tone: "ink", opacity: 1, inner: 0.3, erase: 0.2, cut: [0.05, -1, 0.02],
-    masses: [[-0.75, -0.14, 0.55, 0.13, 1]] },
-  { depth: 7, kind: "veil", opacity: 0.7, cut: [0.97, -0.24, -0.16],
-    masses: [[-0.34, 0.06, 0.45, 0.28, 1]] },
-  { depth: 6, kind: "stain", tone: "graphite", opacity: 0.62, tilt: -0.03,
-    masses: [[-0.6, -0.04, 0.55, 0.16, 1], [0.95, 0.4, 0.35, 0.05, 0.7]] },
-  { depth: 5, kind: "stain", tone: "charcoal", opacity: 0.7,
-    masses: [[-0.9, -0.45, 0.45, 0.1, 1]] },
-  { depth: 4.3, kind: "veil", opacity: 0.78, cut: [0.18, -0.98, 0.3],
-    masses: [[-0.1, -0.2, 0.4, 0.45, 1], [-0.75, 0.55, 0.3, 0.2, 0.7]] }
+  { depth: 21, kind: "stain", tone: "ink", opacity: 0.8, edge: 0.1, tilt: 0.4,
+    masses: [[0.3, -0.26, 0.1, 0.12, 1, 0.4]] },
+  { depth: 17.5, kind: "stain", tone: "charcoal", opacity: 0.72, edge: 0.1, tilt: -0.3,
+    masses: [[0.64, 0.46, 0.1, 0.13, 1, -0.3], [-0.64, 0.0, 0.06, 0.08, 0.6]] },
+  { depth: 15.2, kind: "veil", opacity: 0.5,
+    masses: [[0.1, 0.2, 0.6, 0.55, 0.9]] },
+  { depth: 13.2, kind: "stain", tone: "graphite", opacity: 0.66, edge: 0.1, tilt: 0.9,
+    masses: [[-0.52, 0.52, 0.1, 0.12, 1, -0.4]] },
+  { depth: 12.4, kind: "stain", tone: "graphite", opacity: 0.14, grain: 2.2, stretch: 1, rough: 0.35, edge: 0.14, inner: 0.7, erase: 0,
+    masses: [[-0.1, 0.05, 0.7, 0.65, 1]] },
+  { depth: 11.6, kind: "stain", tone: "charcoal", opacity: 0.42, edge: 0.12, tilt: -0.8,
+    masses: [[0.5, 0.58, 0.07, 0.09, 1]] },
+  { depth: 10.3, kind: "veil", opacity: 0.6, cut: [-0.6, 0.8, -0.05],
+    masses: [[0.45, 0.1, 0.4, 0.4, 1], [-0.55, 0.35, 0.3, 0.34, 0.7]] },
+  { depth: 9, kind: "stain", tone: "graphite", opacity: 0.66, tilt: -0.6, edge: 0.14, cut: [-0.34, 0.94, -0.75],
+    masses: [[0.6, -0.55, 0.13, 0.14, 1, -0.6]] },
+  { depth: 8, kind: "stain", tone: "ink", opacity: 1, inner: 0.3, erase: 0.05, tilt: 0.3, edge: 0.16, cut: [0.82, -0.57, -0.33],
+    masses: [[-0.2, 0.22, 0.19, 0.21, 1, 0.5]] },
+  { depth: 7, kind: "veil", opacity: 0.7, cut: [0.8, 0.6, -0.03],
+    masses: [[-0.36, 0.4, 0.34, 0.36, 1]] },
+  { depth: 6, kind: "stain", tone: "graphite", opacity: 0.62, tilt: 1.1, stretch: 0.8, edge: 0.4, cut: [-0.94, 0.34, -0.62],
+    masses: [[0.44, -0.42, 0.22, 0.26, 1, 0.6], [0.7, -0.66, 0.1, 0.12, 0.7]] },
+  { depth: 5, kind: "stain", tone: "charcoal", opacity: 0.7, tilt: 0.45, edge: 0.4,
+    masses: [[-0.36, 0.36, 0.26, 0.3, 1, 0.4]] },
+  { depth: 4.3, kind: "veil", opacity: 0.78, cut: [0.6, -0.8, 0.25],
+    masses: [[-0.5, -0.4, 0.34, 0.4, 1], [0.62, 0.45, 0.3, 0.3, 0.7]] }
 ];
 
 // Sparse receding traces: [x, y] in view fractions at a depth. They nearly share a vanishing point, but not quite.
@@ -124,8 +127,8 @@ const TEXT_FONT_PX = 64;
 const TEXT_FONT_FAMILY = 'ui-serif, Georgia, "Times New Roman", serif';
 const TEXT_MAX_OPACITY = 0.8;
 const TEXT_REGIONS = [
-  [0.12, 0.62, -0.62, -0.4],
-  [-0.72, -0.3, 0.4, 0.62],
+  [-0.6, -0.2, -0.4, -0.22],
+  [-0.12, 0.2, -0.76, -0.62],
   [0.18, 0.66, 0.02, 0.14],
   [-0.2, 0.25, 0.56, 0.7]
 ];
@@ -261,9 +264,11 @@ function composition(masses, x, y) {
   let value = 0;
 
   for (let index = 0; index < masses.length; index += 1) {
-    const [mx, my, rx, ry, weight] = masses[index];
-    const dx = (x - mx) / rx;
-    const dy = (y - my) / ry;
+    const [mx, my, rx, ry, weight, angle = 0] = masses[index];
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const dx = ((x - mx) * cos + (y - my) * sin) / rx;
+    const dy = ((y - my) * cos - (x - mx) * sin) / ry;
     value = Math.max(value, weight * Math.exp(-(dx * dx + dy * dy)));
   }
 

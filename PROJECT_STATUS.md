@@ -6,7 +6,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 
 - Replaced the 2D canvas field with a Three.js shallow depth volume: one renderer, one scene, one perspective camera, one animation loop.
 - Introduced genuine Z-depth: 13 translucent spatial layers between 4.3 and 21 units from the viewer.
-- Layers are washed-charcoal residue, erasure veils, and one faint ground wash, generated procedurally as alpha maps at startup.
+- Layers are washed-charcoal residue, erasure veils, and one faint formless density, generated procedurally as alpha maps at startup.
 - Layer planes cover 1.5x the view at their depth and fade to zero alpha before their edges, so plane boundaries are not visible.
 - Depth cues are built into the volume itself: occlusion by field-coloured veils with wavering cut edges, fog as aerial perspective, finer texture detail with distance, softer layers away from the fixation depth.
 - Autonomous camera parallax: tiny lateral, vertical and forward drift while holding a mid-depth fixation, with occasional slow re-fixation. Near and far material slide in opposite directions.
@@ -15,6 +15,10 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Independent layer drift is suppressed during the flat phase and returns slowly as depth re-forms.
 - Depth contrast is compressed during flat without revealing additional far layers: nearer layers take on mid-depth tone and strength, while far haze is left unchanged.
 - Legible-phase parallax was slightly strengthened (camera lateral travel increased by about 40%).
+- Landscape-like horizontal composition removed: no horizon band, sky zone, ground zone, shoreline, or cloud-bank forms. Residue now forms a few separate compound depth events.
+- Depth cues are distributed independently of screen height: near, defocused material sits high as well as low, and small crisp distant material sits high as well as low.
+- Negative space was rebalanced away from a sky/horizon/ground reading into irregular open areas; text regions were moved to follow the new open areas.
+- Genuine Z-depth and flattening behavior were preserved (alignment still reaches 1.0 with a near-motionless flat plateau of roughly 21-27 seconds).
 - Disappearing perspective traces: sparse, broken hairlines receding through real 3D space, nearly but not exactly sharing a vanishing point, fading in and out and into haze.
 - Rare English sentence kept (same word banks and templates): one sentence maximum, long intervals, slow fade in, brief presence, slow fade out, placed in the scene at a shallow depth where it can be partly veiled.
 - Strictly monochrome warm tonal ladder: off-white field, graphite, charcoal, ink, trace, and text tones. No colour.
@@ -83,7 +87,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - The light field may need display brightness and contrast checked on the final exhibition screen.
 - The Three.js experiment requires WebGL; without it the page shows only the plain field colour.
 - Procedural layers are generated one per frame at startup and again after a large aspect-ratio change, so the volume assembles over a few seconds.
-- The horizontal wash strata may evoke ink-wash landscape; this should be judged on the exhibition screen.
+- The residue fields can read as rubbed smudges, and the small crisp distant fragments can faintly suggest cloud; this should be judged on the exhibition screen.
 - Browser and battery-saver modes can affect frame pacing.
 - GitHub Pages may take a short moment to refresh cached assets after a push.
 
