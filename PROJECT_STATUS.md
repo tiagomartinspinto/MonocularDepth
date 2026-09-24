@@ -10,7 +10,11 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Layer planes cover 1.5x the view at their depth and fade to zero alpha before their edges, so plane boundaries are not visible.
 - Depth cues are built into the volume itself: occlusion by field-coloured veils with wavering cut edges, fog as aerial perspective, finer texture detail with distance, softer layers away from the fixation depth.
 - Autonomous camera parallax: tiny lateral, vertical and forward drift while holding a mid-depth fixation, with occasional slow re-fixation. Near and far material slide in opposite directions.
-- Depth cycle, loosely timed and non-repeating: legible, uncertain (independent layer drift, veils thicken, traces fade), flat (parallax compensated toward the fixation plane, fog lifts so near and far reach similar contrast), then space forms again.
+- Depth cycle, loosely timed and non-repeating: legible, uncertain (relative motion begins converging, veils thicken, traces fade), flat (layers collapse onto one shared plane), then space forms again.
+- Flattening now reaches and holds near-full parallax cancellation: each phase eases to its target and holds, giving a flat plateau of roughly 18-27 seconds at full alignment. The image still moves as one sheet during the plateau.
+- Independent layer drift is suppressed during the flat phase and returns slowly as depth re-forms.
+- Depth contrast is compressed during flat without revealing additional far layers: nearer layers take on mid-depth tone and strength, while far haze is left unchanged.
+- Legible-phase parallax was slightly strengthened (camera lateral travel increased by about 40%).
 - Disappearing perspective traces: sparse, broken hairlines receding through real 3D space, nearly but not exactly sharing a vanishing point, fading in and out and into haze.
 - Rare English sentence kept (same word banks and templates): one sentence maximum, long intervals, slow fade in, brief presence, slow fade out, placed in the scene at a shallow depth where it can be partly veiled.
 - Strictly monochrome warm tonal ladder: off-white field, graphite, charcoal, ink, trace, and text tones. No colour.

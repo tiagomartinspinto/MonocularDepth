@@ -11,6 +11,7 @@ import {
   PerspectiveCamera,
   PlaneGeometry,
   RGBAFormat,
+  SRGBColorSpace,
   Scene,
   Vector3,
   WebGLRenderer
@@ -24,9 +25,12 @@ const FOV = 24;
 const HALF_TAN = Math.tan((FOV * Math.PI) / 360);
 const NOMINAL_ASPECT = 16 / 9;
 const FIXATION_DEPTH = 9;
+// Flattened layers collapse onto one plane slightly in front of fixation, so the whole image keeps sliding as a single sheet.
+const FLAT_DEPTH = 6.5;
 const COVER = 1.5;
 const MAX_DPR = 1.5;
 const FOG_NEAR = 4;
+const FOG_FAR = 24;
 
 // One warm tonal ladder. Every step has a single role; depth moves a tone toward the field.
 const TONE = {
@@ -84,30 +88,35 @@ const TRACES = [
 ];
 
 // Depth is legible, becomes uncertain, flattens, then forms again. Durations are loose so it never reads as a loop.
+// Each phase eases from wherever the previous one left off to its target over `transition` seconds, then holds.
+// align: parallax cancellation onto one shared plane (FLAT_DEPTH). drift: independent layer wandering.
+// compress: nearer layers take on mid-depth tone and strength, so depth contrast collapses without revealing far strata.
 const PHASES = {
   legible: {
-    duration: [55, 85],
-    next: () => "uncertain",
-    target: { align: 0, drift: 0.1, fogFar: 24, nearFade: 1, veil: 0, trace: 1 }
+    duration: [55, 80],
+    transition: 28,
+    next: "uncertain",
+    target: { align: 0, drift: 0.15, compress: 0, veil: 0, trace: 1 }
   },
   uncertain: {
-    duration: [28, 42],
-    next: () => (Math.random() < 0.75 ? "flat" : "forming"),
-    target: { align: 0.2, drift: 1, fogFar: 32, nearFade: 0.85, veil: 0.25, trace: 0.4 }
+    duration: [30, 40],
+    transition: 26,
+    next: "flat",
+    target: { align: 0.4, drift: 0.08, compress: 0.45, veil: 0.2, trace: 0.4 }
   },
   flat: {
-    duration: [16, 28],
-    next: () => "forming",
-    target: { align: 0.92, drift: 0.45, fogFar: 60, nearFade: 0.55, veil: 0.1, trace: 0.05 }
+    duration: [42, 50],
+    transition: 22,
+    next: "forming",
+    target: { align: 1, drift: 0, compress: 1, veil: 0.05, trace: 0 }
   },
   forming: {
-    duration: [30, 46],
-    next: () => "legible",
-    target: { align: 0, drift: 0.15, fogFar: 22, nearFade: 1, veil: 0, trace: 0.8 }
+    duration: [36, 46],
+    transition: 34,
+    next: "legible",
+    target: { align: 0, drift: 0.15, compress: 0, veil: 0, trace: 0.85 }
   }
 };
-
-const PARAM_TAU = { align: 9, drift: 14, fogFar: 14, nearFade: 14, veil: 14, trace: 12 };
 
 const TEXT_CANVAS_WIDTH = 2048;
 const TEXT_CANVAS_HEIGHT = 128;
@@ -410,7 +419,11 @@ try {
 if (renderer) {
   const scene = new Scene();
   const camera = new PerspectiveCamera(FOV, 1, 0.1, 80);
-  const fog = new Fog(TONE.field, FOG_NEAR, PHASES.forming.target.fogFar);
+  const fog = new Fog(TONE.field, FOG_NEAR, FOG_FAR);
+  const fieldColor = new Color(TONE.field).getRGB({}, SRGBColorSpace);
+  // Same curve and blend space as Three.js linear fog (mixed after sRGB output conversion),
+  // so legible layers keep exactly the tone they had under scene fog.
+  const fixationHaze = smoothstep(FOG_NEAR, FOG_FAR, FIXATION_DEPTH);
   const plane = new PlaneGeometry(1, 1);
   const fixation = new Vector3(0, 0, -FIXATION_DEPTH);
   const fixationTarget = fixation.clone();
@@ -425,8 +438,11 @@ if (renderer) {
     reducedMotion: reducedMotionQuery.matches,
     time: rand(0, 400),
     phase: "forming",
-    phaseRemaining: rand(...PHASES.forming.duration),
-    params: { ...PHASES.forming.target, fogFar: 18 },
+    phaseElapsed: 0,
+    phaseDuration: rand(...PHASES.forming.duration),
+    // The volume first assembles out of a flattened state.
+    phaseFrom: { align: 0.7, drift: 0, compress: 0.8, veil: 0, trace: 0 },
+    params: { align: 0.7, drift: 0, compress: 0.8, veil: 0, trace: 0 },
     fixationRemaining: rand(18, 34),
     buildQueue: [],
     ready: false,
@@ -437,10 +453,13 @@ if (renderer) {
 
   const layers = LAYERS.map((source, index) => {
     const spec = { ...(source.kind === "veil" ? VEIL : STAIN), ...source };
+    const color = new Color(source.kind === "veil" ? TONE.field : TONE[source.tone]);
+    // Atmospheric fade is applied per layer rather than by scene fog, so it can be compressed.
     const material = new MeshBasicMaterial({
-      color: new Color(source.kind === "veil" ? TONE.field : TONE[source.tone]),
+      color,
       transparent: true,
       depthWrite: false,
+      fog: false,
       opacity: 0
     });
     const mesh = new Mesh(plane, material);
@@ -451,6 +470,8 @@ if (renderer) {
       spec,
       mesh,
       material,
+      tone: color.getRGB({}, SRGBColorSpace),
+      haze: smoothstep(FOG_NEAR, FOG_FAR, source.depth),
       appear: 0,
       seed: index * 2.39 + 0.7,
       driftRate: rand(0.8, 1.25)
@@ -684,18 +705,21 @@ if (renderer) {
   }
 
   function updatePhase(dt) {
-    state.phaseRemaining -= dt;
+    state.phaseElapsed += dt;
 
-    if (state.phaseRemaining <= 0) {
-      state.phase = PHASES[state.phase].next();
-      state.phaseRemaining = rand(...PHASES[state.phase].duration);
+    if (state.phaseElapsed >= state.phaseDuration) {
+      state.phase = PHASES[state.phase].next;
+      state.phaseElapsed = 0;
+      state.phaseDuration = rand(...PHASES[state.phase].duration);
+      state.phaseFrom = { ...state.params };
       canvas.dataset.phase = state.phase;
     }
 
-    const target = PHASES[state.phase].target;
+    const phase = PHASES[state.phase];
+    const progress = smoothstep(0, 1, state.phaseElapsed / phase.transition);
 
-    for (const key in target) {
-      state.params[key] += (target[key] - state.params[key]) * (1 - Math.exp(-dt / PARAM_TAU[key]));
+    for (const key in phase.target) {
+      state.params[key] = lerp(state.phaseFrom[key], phase.target[key], progress);
     }
   }
 
@@ -706,8 +730,8 @@ if (renderer) {
     const t = state.time;
 
     camera.position.set(
-      motion * 0.17 * (0.62 * Math.sin((t * TAU) / 97 + 1.3) + 0.38 * Math.sin((t * TAU) / 173 + 4.1)),
-      motion * 0.07 * (0.6 * Math.sin((t * TAU) / 131 + 0.4) + 0.4 * Math.sin((t * TAU) / 229 + 2.2)),
+      motion * 0.24 * (0.62 * Math.sin((t * TAU) / 97 + 1.3) + 0.38 * Math.sin((t * TAU) / 173 + 4.1)),
+      motion * 0.085 * (0.6 * Math.sin((t * TAU) / 131 + 0.4) + 0.4 * Math.sin((t * TAU) / 229 + 2.2)),
       motion * 0.32 * (0.7 * Math.sin((t * TAU) / 211 + 5) + 0.3 * Math.sin((t * TAU) / 317 + 0.9))
     );
 
@@ -723,13 +747,13 @@ if (renderer) {
     camera.lookAt(fixation);
   }
 
-  // Parallax compensation: at align = 1 every layer shifts and scales as if it sat on the fixation plane.
-  // The camera keeps moving, yet the volume reads flat.
+  // Parallax compensation: at align = 1 every layer shifts and scales exactly as if it sat on one shared plane.
+  // The camera keeps moving and the image keeps moving, but near and far stop betraying their depths.
   function alignOffset(depth, target) {
     const align = state.params.align;
     const advance = camera.position.z;
-    const shift = align * (1 - depth / FIXATION_DEPTH);
-    const scale = lerp(1, (FIXATION_DEPTH * (depth + advance)) / (depth * (FIXATION_DEPTH + advance)), align);
+    const shift = (align * (FLAT_DEPTH - depth)) / (FLAT_DEPTH + advance);
+    const scale = lerp(1, (FLAT_DEPTH * (depth + advance)) / (depth * (FLAT_DEPTH + advance)), align);
 
     target.x += camera.position.x * shift;
     target.y += camera.position.y * shift;
@@ -760,8 +784,19 @@ if (renderer) {
       const coverY = 2 * HALF_TAN * depth * COVER;
       layer.mesh.scale.set(coverX * scale, coverY * scale, 1);
 
+      // Compression only ever lightens layers nearer than the fixation depth; far haze is left as it is.
+      const compress = state.params.compress;
+      const nearness = clamp((FIXATION_DEPTH - depth) / (FIXATION_DEPTH - FOG_NEAR), 0, 1);
+      const haze = Math.max(layer.haze, lerp(layer.haze, fixationHaze, compress));
+      layer.material.color.setRGB(
+        lerp(layer.tone.r, fieldColor.r, haze),
+        lerp(layer.tone.g, fieldColor.g, haze),
+        lerp(layer.tone.b, fieldColor.b, haze),
+        SRGBColorSpace
+      );
+
       let alpha = opacity * smoothstep(0, 1, layer.appear);
-      alpha *= lerp(1, state.params.nearFade, clamp((7.5 - depth) / 3, 0, 1));
+      alpha *= 1 - 0.35 * compress * nearness;
       if (kind === "veil") alpha = Math.min(0.92, alpha * (1 + state.params.veil));
       layer.material.opacity = alpha;
     }
@@ -796,7 +831,6 @@ if (renderer) {
 
     state.time += dt * timeScale;
     updatePhase(dt);
-    fog.far = state.params.fogFar;
     updateCamera(dt * timeScale);
     updateLayers(dt);
     updateTraces();
