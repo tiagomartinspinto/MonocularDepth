@@ -19,7 +19,10 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Depth cues are distributed independently of screen height: near, defocused material sits high as well as low, and small crisp distant material sits high as well as low.
 - Negative space was rebalanced away from a sky/horizon/ground reading into irregular open areas; text regions were moved to follow the new open areas.
 - Genuine Z-depth and flattening behavior were preserved (alignment still reaches 1.0 with a near-motionless flat plateau of roughly 21-27 seconds).
-- Disappearing perspective traces: sparse, broken hairlines receding through real 3D space, nearly but not exactly sharing a vanishing point, fading in and out and into haze.
+- Perspective traces were revised from isolated scratch-like hairlines into 5 sparse spatial fragment structures (8 fragments). Each structure's fragments sit on rays from its own transient viewpoint near the camera path, so they only briefly line up and otherwise slide apart; no two structures share a perspective centre.
+- Traces use depth, occlusion, and parallax as part of the spatial field: fragments recede through real depth, taper with perspective, spread out of focus in front of the fixation depth, fade into haze, and sort against residue and veils (split into short depth pieces so they pass behind or in front correctly).
+- Traces diminish during flattening and return individually, not in sync, as depth re-forms.
+- Composition, camera, phases, and flattening mechanisms remain otherwise unchanged by the trace revision.
 - Rare English sentence kept (same word banks and templates): one sentence maximum, long intervals, slow fade in, brief presence, slow fade out, placed in the scene at a shallow depth where it can be partly veiled.
 - Strictly monochrome warm tonal ladder: off-white field, graphite, charcoal, ink, trace, and text tones. No colour.
 - No visible 3D primitives, particles, dots, grids, wireframes, network graphs, or post-processing.
@@ -95,7 +98,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 
 - `node --check main.js` passes.
 - Local page loads in headless Chrome with no console errors or warnings.
-- Scene renders 13 layers and 12 trace segments; measured differential parallax between near and far layers in the legible phase, converging in the flat phase.
+- Scene renders 13 layers and 8 trace fragments; measured differential parallax between near and far layers in the legible phase, converging in the flat phase.
 - Rendered pixels are warm neutral only (maximum saturation about 0.1, which is the off-white field and warm greys).
 - No DOM text or controls; only `resize`, `visibilitychange`, and WebGL context listeners are registered.
 - No animation frames while the document is hidden; rendering resumes when visible.
