@@ -36,6 +36,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - No visible 3D primitives, particles, dots, grids, wireframes, network graphs, or post-processing.
 - No user interaction: no controls, no pointer, touch, or keyboard handling, no OrbitControls.
 - Rendering capped at 30 fps (20 fps with reduced motion), device pixel ratio capped at 1.5, animation stopped while the document is hidden.
+- After a WebGL context loss and restore, the field clear colour is re-applied (Three.js resets it to black), so the artwork resumes exactly as it was rendered before the loss.
 - `prefers-reduced-motion` reduces camera travel, layer drift, and time rate, and renders at pixel ratio 1.
 - Three.js r186 vendored as ES modules in `vendor/three/` with its MIT licence, so there is still no build step and no network dependency at runtime.
 - No custom shaders, no analytics, telemetry, external services, or remote APIs.

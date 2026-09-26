@@ -1297,7 +1297,11 @@ if (renderer) {
     event.preventDefault();
     stop();
   });
-  canvas.addEventListener("webglcontextrestored", start);
+  canvas.addEventListener("webglcontextrestored", () => {
+    // Three.js rebuilds its GL state on restore, which returns the clear colour to black.
+    renderer.setClearColor(TONE.field, 1);
+    start();
+  });
   window.addEventListener("resize", scheduleResize);
   document.addEventListener("visibilitychange", onVisibilityChange);
 
