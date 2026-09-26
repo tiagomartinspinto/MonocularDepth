@@ -139,6 +139,13 @@ const TEXT_CANVAS_HEIGHT = 128;
 const TEXT_FONT_PX = 64;
 const TEXT_FONT_FAMILY = 'ui-serif, Georgia, "Times New Roman", serif';
 const TEXT_MAX_OPACITY = 0.8;
+// A sentence sits between existing layers, never on one: from just behind the nearest residue to just past the far veil.
+const TEXT_DEPTHS = [5.5, 6.5, 7.5, 8.5, 9.6, 11];
+// Regions are starting zones only; each is widened so a sentence can lean into residue or a veil instead of waiting in open space.
+const TEXT_REGION_SPREAD = [0.18, 0.12];
+// Defocus as a fraction of type height, reached a few units away from the fixation depth.
+const TEXT_SOFTNESS = 0.036;
+const TEXT_CANDIDATES = 48;
 const TEXT_REGIONS = [
   [-0.6, -0.2, -0.4, -0.22],
   [-0.12, 0.2, -0.76, -0.62],
@@ -542,19 +549,24 @@ if (renderer) {
   const textCanvas = document.createElement("canvas");
   textCanvas.width = TEXT_CANVAS_WIDTH;
   textCanvas.height = TEXT_CANVAS_HEIGHT;
-  const textContext = textCanvas.getContext("2d");
+  const textContext = textCanvas.getContext("2d", { willReadFrequently: true });
   const textTexture = new CanvasTexture(textCanvas);
   textTexture.minFilter = LinearMipmapLinearFilter;
+  // Haze is applied by hand, as for the layers, so the sentence compresses with the rest of the volume.
   const textMaterial = new MeshBasicMaterial({
     color: new Color(TONE.text),
     alphaMap: textTexture,
     transparent: true,
     depthWrite: false,
+    fog: false,
     opacity: 0
   });
   const textMesh = new Mesh(plane, textMaterial);
   textMesh.visible = false;
   scene.add(textMesh);
+  const textTone = new Color(TONE.text).getRGB({}, SRGBColorSpace);
+  const inkLevel = new Color(TONE.ink).getRGB({}, SRGBColorSpace).g;
+  const tone = {};
 
   const text = {
     stage: "wait",
@@ -564,12 +576,18 @@ if (renderer) {
     hold: 0,
     fadeOut: 0,
     depth: 6,
+    region: null,
+    recent: [],
     fx: 0,
     fy: 0,
     fontPx: TEXT_FONT_PX,
     measured: 0,
     base: new Vector3()
   };
+  const eye = new Vector3();
+  const anchor = new Vector3();
+  const probe = new Vector3();
+  const layerCentre = new Vector3();
 
   scene.fog = fog;
   renderer.setClearColor(TONE.field, 1);
@@ -697,27 +715,201 @@ if (renderer) {
     textTexture.needsUpdate = true;
   }
 
+  // Defocus is baked into the type once per sentence, as it is into the residue: a small gaussian spread of the glyphs.
+  function softenSentence(sigma) {
+    if (sigma < 0.4) return;
+
+    const radius = Math.ceil(sigma * 3);
+    const x0 = Math.max(0, Math.floor((TEXT_CANVAS_WIDTH - text.measured) / 2) - radius * 2);
+    const x1 = Math.min(TEXT_CANVAS_WIDTH, Math.ceil((TEXT_CANVAS_WIDTH + text.measured) / 2) + radius * 2);
+    const width = x1 - x0;
+    const height = TEXT_CANVAS_HEIGHT;
+    const image = textContext.getImageData(x0, 0, width, height);
+    const data = image.data;
+    const kernel = new Float32Array(radius * 2 + 1);
+    const source = new Float32Array(width * height);
+    const spread = new Float32Array(width * height);
+    let total = 0;
+
+    for (let k = -radius; k <= radius; k += 1) {
+      kernel[k + radius] = Math.exp(-(k * k) / (2 * sigma * sigma));
+      total += kernel[k + radius];
+    }
+    for (let k = 0; k < kernel.length; k += 1) kernel[k] /= total;
+    for (let i = 0; i < width * height; i += 1) source[i] = data[i * 4 + 1];
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        let sum = 0;
+        for (let k = -radius; k <= radius; k += 1) sum += source[y * width + clamp(x + k, 0, width - 1)] * kernel[k + radius];
+        spread[y * width + x] = sum;
+      }
+    }
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        let sum = 0;
+        for (let k = -radius; k <= radius; k += 1) sum += spread[clamp(y + k, 0, height - 1) * width + x] * kernel[k + radius];
+        const value = Math.round(sum);
+        data[(y * width + x) * 4] = value;
+        data[(y * width + x) * 4 + 1] = value;
+        data[(y * width + x) * 4 + 2] = value;
+      }
+    }
+
+    textContext.putImageData(image, x0, 0);
+    textTexture.needsUpdate = true;
+  }
+
+  function sentenceBase(fx, fy, depth, target) {
+    const halfWidth = HALF_TAN * depth * state.aspect;
+    const halfText = (text.measured * textWorldScale(depth)) / 2 / halfWidth;
+
+    return target.set(clamp(fx, -0.9 + halfText, 0.9 - halfText) * halfWidth, fy * HALF_TAN * depth, -depth);
+  }
+
   function placeSentence() {
     const scale = textWorldScale(text.depth);
-    const halfWidth = HALF_TAN * text.depth * state.aspect;
-    const halfHeight = HALF_TAN * text.depth;
-    const halfText = (text.measured * scale) / 2 / halfWidth;
-    const fx = clamp(text.fx, -0.9 + halfText, 0.9 - halfText);
 
     textMesh.scale.set(TEXT_CANVAS_WIDTH * scale, TEXT_CANVAS_HEIGHT * scale, 1);
-    text.base.set(fx * halfWidth, text.fy * halfHeight, -text.depth);
+    sentenceBase(text.fx, text.fy, text.depth, text.base);
+  }
+
+  function textHaze(depth) {
+    const haze = smoothstep(FOG_NEAR, FOG_FAR, depth);
+    return Math.max(haze, lerp(haze, fixationHaze, state.params.compress));
+  }
+
+  function toneLevel(color) {
+    return color.getRGB(tone, SRGBColorSpace).g;
+  }
+
+  // Coverage of a layer's actual alpha map where the sight line from `from` through `point` crosses it.
+  function layerCoverage(layer, point, from) {
+    const map = layer.material.alphaMap;
+    if (!layer.mesh.visible || !map) return 0;
+
+    const depth = layer.spec.depth;
+    const reach = (-depth - from.z) / (point.z - from.z);
+    const scale = alignOffset(depth, layerCentre.set(0, 0, -depth), from);
+    const u = 0.5 + (from.x + (point.x - from.x) * reach - layerCentre.x) / (2 * HALF_TAN * depth * state.aspect * COVER * scale);
+    const v = 0.5 + (from.y + (point.y - from.y) * reach - layerCentre.y) / (2 * HALF_TAN * depth * COVER * scale);
+    if (u <= 0 || u >= 1 || v <= 0 || v >= 1) return 0;
+
+    const { data, width, height } = map.image;
+    return (data[(Math.floor(v * height) * width + Math.floor(u * width)) * 4 + 1] / 255) * layer.material.opacity;
+  }
+
+  // How a candidate would sit in the volume, judged from the residue and veils actually built, as the camera will see it
+  // while the sentence is present. Contrast is relative to the same type on open field at the same depth, so haze is not
+  // counted against far placements. `front` is occlusion by nearer veils, which read as passing behind (a nearer stain over
+  // dark type reads as type on the stain, so it only counts as lost contrast); `surround` is residue just around the sentence.
+  function assessPlacement(fx, fy, depth, times, levels) {
+    const field = fieldColor.g;
+    const type = lerp(textTone.g, field, textHaze(depth));
+    const reference = field - type;
+    const worldScale = textWorldScale(depth);
+    const halfText = (text.measured / 2) * worldScale;
+    const typeHeight = text.fontPx * worldScale;
+    const rows = [-0.18, 0.02, 0.22];
+    const columns = 24;
+    const ratios = [];
+    let front = 0;
+    let fronted = 0;
+    let surround = 0;
+    let ring = 0;
+    let scale = 1;
+
+    function sightLine(dx, dy) {
+      probe.set(anchor.x + dx * scale, anchor.y + dy * scale, anchor.z);
+      let background = field;
+      let full = field;
+      let transmit = 1;
+      let clear = 1;
+
+      for (let index = 0; index < layers.length; index += 1) {
+        const cover = layerCoverage(layers[index], probe, eye);
+        full = lerp(full, levels[index], cover);
+        if (layers[index].spec.depth > depth) background = full;
+        else {
+          transmit *= 1 - cover;
+          if (layers[index].spec.kind === "veil") clear *= 1 - cover;
+        }
+      }
+
+      return { contrast: Math.max(0, background - type) * transmit, veiled: 1 - clear, full };
+    }
+
+    for (let t = 0; t < times.length; t += 1) {
+      cameraPosition(state.time + times[t] * (state.reducedMotion ? 0.5 : 1), eye);
+      scale = alignOffset(depth, sentenceBase(fx, fy, depth, anchor), eye);
+
+      for (let c = 0; c < columns; c += 1) {
+        const dx = ((c + 0.5) / columns - 0.5) * 2 * halfText;
+
+        for (let r = 0; r < rows.length; r += 1) {
+          const sample = sightLine(dx, rows[r] * typeHeight);
+          ratios.push(sample.contrast / reference);
+          front = Math.max(front, sample.veiled);
+          if (sample.veiled > 0.12) fronted += 1;
+        }
+
+        for (const dy of [-1.3, 1.3]) {
+          surround += (field - sightLine(dx, dy * typeHeight).full) / (field - inkLevel);
+          ring += 1;
+        }
+      }
+    }
+
+    const mean = ratios.reduce((sum, value) => sum + value, 0) / ratios.length;
+    const low = ratios.filter((value) => value < 0.5).length / ratios.length;
+
+    return { mean, low, front, fronted: fronted / ratios.length, surround: surround / ring };
+  }
+
+  // Placement looks for a sentence that is in the volume rather than on it: most often partly behind a veil, otherwise
+  // open but close to residue that parallax will set it against. Readability comes first.
+  function chooseSentencePlacement() {
+    const region = pick(TEXT_REGIONS.filter((zone) => zone !== text.region));
+    const within = Math.random() < 0.6;
+    const times = [text.fadeIn * 0.7, text.fadeIn + text.hold * 0.5];
+    const levels = layers.map((layer) => toneLevel(layer.material.color));
+    let best = null;
+
+    for (let n = 0; n < TEXT_CANDIDATES; n += 1) {
+      const fx = rand(region[0] - TEXT_REGION_SPREAD[0], region[1] + TEXT_REGION_SPREAD[0]);
+      const fy = clamp(rand(region[2] - TEXT_REGION_SPREAD[1], region[3] + TEXT_REGION_SPREAD[1]), -0.8, 0.8);
+      if (Math.abs(fx) < 0.22 && Math.abs(fy) < 0.28) continue;
+
+      const depth = pick(TEXT_DEPTHS) + rand(-0.2, 0.2);
+      const fit = assessPlacement(fx, fy, depth, times, levels);
+      let score;
+
+      if (fit.mean < 0.7 || fit.low > 0.2) score = fit.mean - 2;
+      else if (within) score = 1 - 2 * Math.abs(fit.front - 0.42) - Math.abs(fit.fronted - 0.25) + 0.4 * fit.surround;
+      else score = 1 - 2 * Math.abs(fit.surround - 0.22) + 0.3 * fit.mean + 0.3 * Math.min(fit.front, 0.3);
+
+      score += rand(0, 0.15);
+      // Sentences should not keep returning to the same pocket of the field, whichever zone they start from.
+      for (const [x, y] of text.recent) if (Math.hypot(fx - x, fy - y) < 0.3) score -= 0.35;
+      if (!best || score > best.score) best = { region, fx, fy, depth, score };
+    }
+
+    return best;
   }
 
   function beginSentence() {
-    const region = pick(TEXT_REGIONS);
-
     drawSentence(generateSentence());
-    text.depth = Math.random() < 0.18 ? rand(7.6, 8.6) : rand(5.2, 6.8);
-    text.fx = rand(region[0], region[1]);
-    text.fy = rand(region[2], region[3]);
     text.fadeIn = rand(6, 9);
     text.hold = rand(2.2, 4);
     text.fadeOut = rand(7, 10);
+
+    const placement = chooseSentencePlacement();
+    text.region = placement.region;
+    text.depth = placement.depth;
+    text.fx = placement.fx;
+    text.fy = placement.fy;
+    text.recent = [[text.fx, text.fy], ...text.recent].slice(0, 3);
+    softenSentence(TEXT_SOFTNESS * text.fontPx * smoothstep(0.5, 3.5, Math.abs(text.depth - FIXATION_DEPTH)));
     text.stage = "in";
     text.elapsed = 0;
     placeSentence();
@@ -781,15 +973,20 @@ if (renderer) {
 
   // Continuous perceptual adjustment: small translation while holding a mid-depth fixation,
   // with occasional slow re-fixation. Points nearer and farther than fixation drift in opposite directions.
-  function updateCamera(dt) {
+  function cameraPosition(t, target) {
     const motion = state.reducedMotion ? 0.2 : 1;
-    const t = state.time;
 
-    camera.position.set(
+    return target.set(
       motion * 0.24 * (0.62 * Math.sin((t * TAU) / 97 + 1.3) + 0.38 * Math.sin((t * TAU) / 173 + 4.1)),
       motion * 0.085 * (0.6 * Math.sin((t * TAU) / 131 + 0.4) + 0.4 * Math.sin((t * TAU) / 229 + 2.2)),
       motion * 0.32 * (0.7 * Math.sin((t * TAU) / 211 + 5) + 0.3 * Math.sin((t * TAU) / 317 + 0.9))
     );
+  }
+
+  function updateCamera(dt) {
+    const motion = state.reducedMotion ? 0.2 : 1;
+
+    cameraPosition(state.time, camera.position);
 
     state.fixationRemaining -= dt;
     if (state.fixationRemaining <= 0) {
@@ -805,14 +1002,14 @@ if (renderer) {
 
   // Parallax compensation: at align = 1 every layer shifts and scales exactly as if it sat on one shared plane.
   // The camera keeps moving and the image keeps moving, but near and far stop betraying their depths.
-  function alignOffset(depth, target) {
+  function alignOffset(depth, target, from = camera.position) {
     const align = state.params.align;
-    const advance = camera.position.z;
+    const advance = from.z;
     const shift = (align * (FLAT_DEPTH - depth)) / (FLAT_DEPTH + advance);
     const scale = lerp(1, (FLAT_DEPTH * (depth + advance)) / (depth * (FLAT_DEPTH + advance)), align);
 
-    target.x += camera.position.x * shift;
-    target.y += camera.position.y * shift;
+    target.x += from.x * shift;
+    target.y += from.y * shift;
     return scale;
   }
 
@@ -885,7 +1082,17 @@ if (renderer) {
     const scale = alignOffset(text.depth, position);
     const worldScale = textWorldScale(text.depth) * scale;
     textMesh.scale.set(TEXT_CANVAS_WIDTH * worldScale, TEXT_CANVAS_HEIGHT * worldScale, 1);
-    textMaterial.opacity = TEXT_MAX_OPACITY * envelope;
+
+    // Like the layers: haze by depth, and while depth compresses a near sentence takes on mid-depth haze and recedes a little.
+    const haze = textHaze(text.depth);
+    const nearness = clamp((FIXATION_DEPTH - text.depth) / (FIXATION_DEPTH - FOG_NEAR), 0, 1);
+    textMaterial.color.setRGB(
+      lerp(textTone.r, fieldColor.r, haze),
+      lerp(textTone.g, fieldColor.g, haze),
+      lerp(textTone.b, fieldColor.b, haze),
+      SRGBColorSpace
+    );
+    textMaterial.opacity = TEXT_MAX_OPACITY * envelope * (1 - 0.25 * state.params.compress * nearness);
   }
 
   function step(dt) {
