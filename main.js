@@ -29,6 +29,8 @@ const FIXATION_DEPTH = 9;
 const FLAT_DEPTH = 6.5;
 const COVER = 1.5;
 const MAX_DPR = 1.5;
+// Main-thread time per frame given to generating residue while the volume assembles.
+const TEXTURE_BUDGET_MS = 12;
 const FOG_NEAR = 4;
 const FOG_FAR = 24;
 
@@ -261,23 +263,72 @@ function createNoise(seed) {
 
 const noise = createNoise(19);
 
-// Octaves are rotated against each other so no grid direction survives.
-function fbm(x, y, octaves) {
+// A shared octave construction: each octave doubles in frequency and is rotated against the last so no grid direction
+// survives. A layer can carry its own character from octave 2 upwards (see residueCharacter).
+function octaveCharacter(gain, scale, turn, twist, restore = 1) {
+  const steps = [];
+
+  for (let octave = 0; octave < 6; octave += 1) {
+    const size = octave === 0 ? 2 : scale;
+    const angle = octave === 0 ? SHARED_TURN : turn + twist * (octave - 1);
+    steps.push([size * Math.cos(angle), size * Math.sin(angle), size]);
+  }
+
+  return { gain, steps, restore };
+}
+
+const SHARED_TURN = Math.atan2(1.2, 1.6);
+const SHARED_OCTAVES = octaveCharacter(0.5, 2, SHARED_TURN, 0);
+
+// Octaves 0 and 1 always follow the shared construction, so every layer keeps the silhouettes the composition was built
+// on; `character` and `detail` only shape octave 2 upwards. Normalisation stays that of the shared construction, so a
+// quieter octave lowers variation instead of being rescaled back.
+// `cell` is the size of an octave-0 cell in pixels at 1080 lines: an octave fades out before its cell becomes finer than
+// `limit`, so no detail is generated finer than the softness and raster meant to carry it (this is what used to alias).
+// `shiftX`/`shiftY` take back part of a domain warp that was added to x/y, from octave 2 upwards only: the warp still
+// shapes the masses, but fine structure is not sheared into curling, smoke-like filaments.
+function fbm(x, y, octaves, cell, limit, character = SHARED_OCTAVES, detail = 1, shiftX = 0, shiftY = 0) {
+  const norm = 1 - 0.5 ** octaves;
   let sum = 0;
   let amp = 0.5;
-  let norm = 0;
 
   for (let octave = 0; octave < octaves; octave += 1) {
-    sum += amp * noise(x, y);
-    norm += amp;
-    const nx = x * 1.6 - y * 1.2 + 3.1;
-    const ny = x * 1.2 + y * 1.6 + 1.7;
+    const band = smoothstep(limit, limit * 1.6, cell);
+    if (band <= 0) break;
+
+    sum += amp * band * (octave > 1 ? detail : 1) * noise(x, y);
+    if (octave === 1) {
+      x = (x - 1.6 * shiftX + 1.2 * shiftY) * character.restore;
+      y -= 1.2 * shiftX + 1.6 * shiftY;
+    }
+    const [c, s, size] = character.steps[octave];
+    const nx = x * c - y * s + 3.1;
+    const ny = x * s + y * c + 1.7;
     x = nx;
     y = ny;
-    amp *= 0.5;
+    cell /= size;
+    amp *= octave === 0 ? 0.5 : character.gain;
   }
 
   return (sum / norm) * 1.4;
+}
+
+// Each layer's own fine structure: how quickly detail falls away and how its octaves turn against each other, so
+// no single noise signature (fixed ratios, fixed 37 degree turn, even roughness) repeats across the field. On crisp
+// layers fine octaves mostly undo the layer's stretch, which otherwise resolved into parallel hatching; defocused layers
+// keep it, so they read as a wiped direction rather than rounding into puffy lobes.
+function residueCharacter(spec) {
+  const crisp = 1 - clamp((residueBlur(spec) - 1.5) / 2, 0, 1);
+  const random = mulberry32(Math.round(spec.depth * 997));
+  const sign = () => (random() < 0.5 ? -1 : 1);
+
+  return octaveCharacter(
+    lerp(0.42, 0.62, random()),
+    lerp(1.75, 2.3, random()),
+    sign() * lerp(0.5, 1.3, random()),
+    sign() * lerp(0.2, 0.7, random()),
+    lerp(1, 1 / spec.stretch, 0.75 * crisp)
+  );
 }
 
 function composition(masses, x, y) {
@@ -299,15 +350,33 @@ function edgeFade(unit) {
   return smoothstep(0, 0.14, unit) * smoothstep(0, 0.14, 1 - unit);
 }
 
+// Softness of a layer's residue in pixels at 1080 lines: sharpest at the fixation depth, increasingly defocused in
+// front of it, only slightly softer behind it (distant material stays small and fairly crisp). Veils and faint washes
+// are broad by nature. The raster follows this softness, so texels are always finer than the detail they carry.
+function residueBlur(spec) {
+  const blur = spec.depth < FIXATION_DEPTH
+    ? lerp(1.5, 3.6, clamp((FIXATION_DEPTH - spec.depth) / (FIXATION_DEPTH - FOG_NEAR), 0, 1))
+    : lerp(1.5, 2.7, clamp((spec.depth - FIXATION_DEPTH) / 12, 0, 1));
+
+  return spec.kind === "veil" || spec.opacity < 0.2 ? Math.max(blur, 4.8) : blur;
+}
+
 // Washed charcoal / erasure density, stored as an alpha map.
 // Noise is sampled in world units, so deeper layers carry finer detail on screen (a texture gradient cue).
-// Layers away from the fixation depth are generated softer and at lower resolution: focus as a depth cue.
-function residueTexture(spec, aspect) {
+// Layers away from the fixation depth are generated softer: focus as a depth cue.
+// The map covers only the region its masses can reach (placed on the plane through the texture offset and repeat), so
+// resolution is spent where residue is. It is built a row at a time, so generation can be spread across frames.
+function* residueJob(spec, aspect) {
   const focusBlur = clamp(Math.abs(spec.depth - FIXATION_DEPTH) / FIXATION_DEPTH, 0, 1);
-  const height = spec.kind === "veil" && !spec.cut ? 200 : Math.round(lerp(420, 220, clamp(focusBlur * 1.2, 0, 1)));
-  const width = Math.max(64, Math.round(height * aspect));
-  const data = new Uint8Array(width * height * 4);
+  const blur = residueBlur(spec);
+  // Veils stay broad; stains may keep structure down to about two texels, so their edges break up rather than round off.
+  const limit = blur * (spec.kind === "veil" ? 1.6 : 1.45);
+  const texel = clamp(blur * 0.62, 1, 3);
+  const planeRows = (COVER * 1080) / texel;
+  const planeCols = planeRows * aspect;
   const freq = spec.grain * (spec.depth / FIXATION_DEPTH);
+  const cell = 540 / freq;
+  const character = residueCharacter(spec);
   const edge = spec.edge + focusBlur * 0.16;
   const cosA = Math.cos(spec.tilt);
   const sinA = Math.sin(spec.tilt);
@@ -316,67 +385,124 @@ function residueTexture(spec, aspect) {
   // On narrow screens the composition keeps its proportions and is cropped rather than squeezed.
   const compose = Math.pow(aspect / NOMINAL_ASPECT, 0.4);
 
+  // Bounds of every point where a mass reaches the 0.004 threshold below which nothing is drawn, plus a clear margin.
+  let left = 1;
+  let right = 0;
+  let bottom = 1;
+  let top = 0;
+  for (const [mx, my, rx, ry, weight, angle = 0] of spec.masses) {
+    const reach = Math.sqrt(Math.max(0, Math.log(weight / 0.004)));
+    const ex = reach * Math.hypot(rx * Math.cos(angle), ry * Math.sin(angle));
+    const ey = reach * Math.hypot(rx * Math.sin(angle), ry * Math.cos(angle));
+    left = Math.min(left, 0.5 + (mx - ex) / compose / (2 * COVER) - 3 / planeCols);
+    right = Math.max(right, 0.5 + (mx + ex) / compose / (2 * COVER) + 3 / planeCols);
+    bottom = Math.min(bottom, 0.5 + (my - ey) / (2 * COVER) - 3 / planeRows);
+    top = Math.max(top, 0.5 + (my + ey) / (2 * COVER) + 3 / planeRows);
+  }
+  left = Math.max(0, left);
+  right = Math.min(1, right);
+  bottom = Math.max(0, bottom);
+  top = Math.min(1, top);
+
+  const width = Math.max(8, Math.ceil((right - left) * planeCols));
+  const height = Math.max(8, Math.ceil((top - bottom) * planeRows));
+  const field = new Float32Array(width * height).fill(-4);
+  const edges = new Float32Array(width * height);
+  const rest = new Float32Array(width * height);
+
   for (let j = 0; j < height; j += 1) {
-    const v = (j + 0.5) / height;
+    const v = bottom + ((j + 0.5) / height) * (top - bottom);
     const fadeY = edgeFade(v);
     const y = (v - 0.5) * 2 * COVER;
 
     for (let i = 0; i < width; i += 1) {
-      const k = (j * width + i) * 4;
-      const u = (i + 0.5) / width;
+      const k = j * width + i;
+      const u = left + ((i + 0.5) / width) * (right - left);
       const fade = fadeY * edgeFade(u);
       const x = (u - 0.5) * 2 * COVER;
 
-      data[k + 3] = 255;
       if (fade <= 0 || composition(spec.masses, x * compose, y) < 0.004) continue;
 
       const px = x * aspect * freq;
       const py = y * freq;
       const rx = (px * cosA - py * sinA) * spec.stretch + offsetX;
       const ry = px * sinA + py * cosA + offsetY;
-      const warpX = fbm(rx + 1.7, ry + 9.2, 3);
-      const warpY = fbm(rx + 8.3, ry + 2.8, 3);
+      const warpX = fbm(rx + 1.7, ry + 9.2, 3, cell, limit);
+      const warpY = fbm(rx + 8.3, ry + 2.8, 3, cell, limit);
+      // Broad, independent fields: where fine structure is worked up or left smooth, and where density is uneven.
+      const detail = lerp(0.35, 1.15, smoothstep(-0.4, 0.4, fbm(rx * 0.22 - 6.3, ry * 0.22 + 2.9, 2, cell / 0.22, limit)));
+      const uneven = lerp(0.5, 1.5, smoothstep(-0.4, 0.4, fbm(rx * 0.3 + 4.7, ry * 0.3 - 8.1, 2, cell / 0.3, limit)));
 
       // Masses only set how much residue a region holds; they never draw an outline.
       // Edges come from the internal strata, so nothing reads as a bounded object.
       const mass = composition(spec.masses, (x + warpX * 0.16) * compose, y + warpY * 0.07);
-      const body = fbm(rx + warpX * spec.warp, ry + warpY * spec.warp, 5);
+      const body = fbm(rx + warpX * spec.warp, ry + warpY * spec.warp, 5, cell, limit, character, detail, warpX * spec.warp * 0.7, warpY * spec.warp * 0.7);
 
       // Edge quality wanders: pressed charcoal in places, feathered wash in others.
-      const edgeHere = edge * lerp(0.2, 1.8, smoothstep(-0.45, 0.45, fbm(rx * 0.55 + 9.1, ry * 0.55 - 4.3, 2)));
-      const coverage = lerp(-0.45, 0.8, mass);
-      let alpha = smoothstep(-edgeHere, edgeHere, body * spec.rough + coverage) * smoothstep(0.03, 0.6, mass);
+      edges[k] = edge * lerp(0.2, 1.8, smoothstep(-0.45, 0.45, fbm(rx * 0.55 + 9.1, ry * 0.55 - 4.3, 2, cell / 0.55, limit)));
+      field[k] = body * spec.rough + lerp(-0.45, 0.8, mass);
+      let amount = smoothstep(0.03, 0.6, mass) * fade;
 
       if (spec.cut) {
         const [nx, ny, offset] = spec.cut;
         const along = nx * x + ny * y - offset + warpY * 0.07 + warpX * 0.03;
         const soft = 0.02 + focusBlur * 0.04 + 0.03 * smoothstep(-0.3, 0.5, warpX);
-        alpha *= smoothstep(-soft, soft, along);
+        amount *= smoothstep(-soft, soft, along);
       }
 
-      if (alpha <= 0.002) continue;
+      if (amount <= 0.002 || field[k] < -1.2) continue;
 
-      const density = fbm(rx * 2.1 + 5.1, ry * 3.4 - 3.3, 3);
-      alpha *= 1 - spec.inner + spec.inner * smoothstep(-0.55, 0.6, density);
+      // Internal density: broad and uneven rather than an even grain, following the layer's own direction like a wiped
+      // wash. It is held back from the finest scales, where it read as a stippled surface or as hatching.
+      const inner = Math.min(1, spec.inner * uneven);
+      const density = fbm(rx * 1.7 + 5.1, ry * 2 - 3.3, 2, cell / 2, limit * 1.5);
+      amount *= 1 - inner + inner * smoothstep(-0.55, 0.6, density);
 
       if (spec.erase > 0) {
-        const wipe = fbm(rx * 0.4 + 2.2, ry * 6.5, 3);
-        alpha *= 1 - spec.erase * smoothstep(0.1, 0.55, wipe);
+        // Erasure runs in long wiped passes; kept broader than the softness so it never resolves into scratched lines.
+        const wipe = fbm(rx * 0.4 + 2.2, ry * 5, 2, cell / 5, limit * 1.8);
+        amount *= 1 - spec.erase * smoothstep(0.1, 0.55, wipe);
       }
 
-      alpha *= 0.88 + 0.12 * noise(rx * 9.7, ry * 9.7) * 1.4;
-
-      const value = clamp(Math.round(alpha * fade * 255), 0, 255);
-      data[k] = value;
-      data[k + 1] = value;
-      data[k + 2] = value;
+      // A much weaker fine grain, only where the raster and softness can hold it; its mean stays the same without it.
+      const grain = smoothstep(limit * 1.5, limit * 2.4, cell / 9.7) * detail;
+      amount *= 0.88 + 0.09 * grain * noise(rx * 9.7, ry * 9.7);
+      rest[k] = amount;
     }
+    yield;
+  }
+
+  // Edges are resolved against the local gradient of the field: never narrower than the layer's softness (and never
+  // under about two texels), so a sharp threshold can no longer step from texel to texel when the map is magnified,
+  // and defocused layers cannot open crisp hairline gaps.
+  const spread = Math.max(0.9, (0.8 * blur) / texel);
+  const data = new Uint8Array(width * height * 4);
+  for (let j = 0; j < height; j += 1) {
+    for (let i = 0; i < width; i += 1) {
+      const k = j * width + i;
+      data[k * 4 + 3] = 255;
+      if (rest[k] <= 0) continue;
+
+      const f = field[k];
+      const east = i + 1 < width && field[k + 1] > -4 ? field[k + 1] : f;
+      const west = i > 0 && field[k - 1] > -4 ? field[k - 1] : f;
+      const north = j + 1 < height && field[k + width] > -4 ? field[k + width] : f;
+      const south = j > 0 && field[k - width] > -4 ? field[k - width] : f;
+      const soft = Math.max(edges[k], spread * Math.hypot(east - west, north - south) * 0.5);
+      const value = Math.round(clamp(smoothstep(-soft, soft, f) * rest[k], 0, 1) * 255);
+      data[k * 4] = value;
+      data[k * 4 + 1] = value;
+      data[k * 4 + 2] = value;
+    }
+    yield;
   }
 
   const texture = new DataTexture(data, width, height, RGBAFormat);
   texture.magFilter = LinearFilter;
   texture.minFilter = LinearMipmapLinearFilter;
   texture.generateMipmaps = true;
+  texture.repeat.set(1 / (right - left), 1 / (top - bottom));
+  texture.offset.set(-left / (right - left), -bottom / (top - bottom));
   texture.needsUpdate = true;
 
   return texture;
@@ -467,6 +593,7 @@ if (renderer) {
     params: { align: 0.7, drift: 0, compress: 0.8, veil: 0, trace: 0 },
     fixationRemaining: rand(18, 34),
     buildQueue: [],
+    buildJob: null,
     ready: false,
     animationId: 0,
     resizeId: 0,
@@ -596,18 +723,30 @@ if (renderer) {
   function queueTextures() {
     state.textureAspect = state.aspect;
     state.buildQueue = layers.slice();
+    state.buildJob = null;
   }
 
-  function buildNextTexture() {
-    const layer = state.buildQueue.shift();
-    if (!layer) return;
+  // Residue is generated a few rows at a time within a small per-frame budget, so assembling the volume never stalls
+  // playback; a layer keeps its previous map until the new one is complete.
+  function buildTextures(budget) {
+    const until = performance.now() + budget;
 
-    const previous = layer.material.alphaMap;
-    layer.material.alphaMap = residueTexture(layer.spec, state.textureAspect);
-    layer.material.needsUpdate = !previous;
-    layer.mesh.visible = true;
-    if (previous) previous.dispose();
-    if (!state.buildQueue.length) state.ready = true;
+    while (state.buildQueue.length && performance.now() < until) {
+      const layer = state.buildQueue[0];
+      if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect);
+
+      const { done, value } = state.buildJob.next();
+      if (!done) continue;
+
+      state.buildQueue.shift();
+      state.buildJob = null;
+      const previous = layer.material.alphaMap;
+      layer.material.alphaMap = value;
+      layer.material.needsUpdate = !previous;
+      layer.mesh.visible = true;
+      if (previous) previous.dispose();
+      if (!state.buildQueue.length) state.ready = true;
+    }
   }
 
   // Point at `depth` on the ray from a structure's viewpoint through screen position t along its line.
@@ -791,8 +930,10 @@ if (renderer) {
     const depth = layer.spec.depth;
     const reach = (-depth - from.z) / (point.z - from.z);
     const scale = alignOffset(depth, layerCentre.set(0, 0, -depth), from);
-    const u = 0.5 + (from.x + (point.x - from.x) * reach - layerCentre.x) / (2 * HALF_TAN * depth * state.aspect * COVER * scale);
-    const v = 0.5 + (from.y + (point.y - from.y) * reach - layerCentre.y) / (2 * HALF_TAN * depth * COVER * scale);
+    const planeU = 0.5 + (from.x + (point.x - from.x) * reach - layerCentre.x) / (2 * HALF_TAN * depth * state.aspect * COVER * scale);
+    const planeV = 0.5 + (from.y + (point.y - from.y) * reach - layerCentre.y) / (2 * HALF_TAN * depth * COVER * scale);
+    const u = planeU * map.repeat.x + map.offset.x;
+    const v = planeV * map.repeat.y + map.offset.y;
     if (u <= 0 || u >= 1 || v <= 0 || v >= 1) return 0;
 
     const { data, width, height } = map.image;
@@ -1119,7 +1260,7 @@ if (renderer) {
     if (elapsed < interval - 2) return;
 
     state.lastFrame = now;
-    if (state.buildQueue.length) buildNextTexture();
+    if (state.buildQueue.length) buildTextures(TEXTURE_BUDGET_MS);
     step(Math.min(elapsed, 100) / 1000);
     renderer.render(scene, camera);
   }

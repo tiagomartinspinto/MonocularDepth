@@ -28,6 +28,10 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Placement starts from the existing text zones but reads the built residue and veil maps along the sight line, so a sentence is often partly behind a veil or close to residue rather than always in empty space; readability is checked first and recent positions are avoided.
 - Text can be partially occluded by the spatial layers themselves (no HTML mask). Focus and contrast respond subtly to depth: sentences away from the fixation depth are baked slightly softer, and haze and flat-phase compression apply to text as they do to the layers.
 - Text remains autonomous and restrained: same fades, no motion of its own, no UI overlay or DOM text introduced.
+- Procedural texture resolution was improved: each residue map now covers only the region its masses reach and is rastered to the layer's intended softness (about 1 to 3 screen pixels per texel at 1080 lines, previously about 4 to 8).
+- Visible edge aliasing and stair-stepping were removed at the source: noise is no longer generated finer than the raster that carries it, and edges are resolved against the local gradient so thresholds cannot step from texel to texel when magnified.
+- Residue generation was varied to reduce repeated procedural signatures: each layer has its own fine-octave character, fine structure is not sheared into streaks or filaments, and internal density is broad and uneven rather than an even grain. Silhouettes and composition are unchanged.
+- No new rendering dependencies, shaders, or post-processing were introduced; residue is still generated procedurally on the CPU as alpha maps.
 - Strictly monochrome warm tonal ladder: off-white field, graphite, charcoal, ink, trace, and text tones. No colour.
 - No visible 3D primitives, particles, dots, grids, wireframes, network graphs, or post-processing.
 - No user interaction: no controls, no pointer, touch, or keyboard handling, no OrbitControls.
@@ -93,7 +97,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 
 - The light field may need display brightness and contrast checked on the final exhibition screen.
 - The Three.js experiment requires WebGL; without it the page shows only the plain field colour.
-- Procedural layers are generated one per frame at startup and again after a large aspect-ratio change, so the volume assembles over a few seconds.
+- Procedural layers are generated at startup and again after a large aspect-ratio change within a small per-frame budget, so the volume assembles over roughly 3 seconds (longer with reduced motion).
 - The residue fields can read as rubbed smudges, and the small crisp distant fragments can faintly suggest cloud; this should be judged on the exhibition screen.
 - Browser and battery-saver modes can affect frame pacing.
 - GitHub Pages may take a short moment to refresh cached assets after a push.
