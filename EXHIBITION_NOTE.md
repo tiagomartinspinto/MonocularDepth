@@ -6,7 +6,7 @@ Monocular Depth
 
 ## Medium
 
-Browser-based artwork, HTML/CSS/JavaScript
+Browser-based artwork, HTML/CSS/JavaScript and WebGL (Three.js)
 
 ## Year
 
@@ -24,18 +24,18 @@ Monocular Depth is a browser-based artwork about constructing space when stereos
 
 The work is shaped by the artist's lived experience of amblyopia and reduced stereoscopic vision. It reflects a way of moving through the world where depth is learned through adaptation, repetition, timing, memory, and bodily correction.
 
-The image remains flat, but it keeps trying to become spatial.
+The screen remains flat, but the image keeps trying to become spatial.
 
 ## Installation Notes
 
 - fullscreen browser window
-- dark monitor or projection
+- monitor or projection showing the work's warm off-white field
 - no visible browser chrome
 - can run passively
 - The work runs autonomously.
 - no mouse or touch interaction is required
 - keyboard and mouse should not be visible in the exhibition setup
-- dark or dim space recommended
+- check display brightness and contrast on site (low-contrast greys on a warm off-white field)
 - no internet required after setup
 
 ## Technical Notes
