@@ -40,6 +40,19 @@ const RECALIBRATION = {
   quiet: [40, 100],
   duration: [12, 25]
 };
+// Evolving residue: a few fields hold two alternate states beside their composed one, built once with the rest of the
+// map, and move between them slowly: an edge advances or retreats, density gathers in one part and thins in another, an
+// opening appears or closes. The field stays where it is and stays the same material. amount is how far the alternates
+// depart from the composed state; times are in seconds.
+const MORPH = {
+  amount: 1,
+  transition: [12, 30],
+  hold: [8, 30],
+  concurrent: 2,
+  reduced: 0.4
+};
+// By depth: the near streaked mass, the lower-right soft mass, the ink, and the far upper-right cluster.
+const MORPH_LAYERS = [5, 6, 8, 17.5];
 
 // One warm tonal ladder. Every step has a single role; depth moves a tone toward the field.
 const TONE = {
@@ -374,12 +387,41 @@ function residueBlur(spec) {
   return spec.kind === "veil" || spec.opacity < 0.2 ? Math.max(blur, 4.8) : blur;
 }
 
+// Alternate states of one field share its material body. Only what a field holds changes: its masses move a little,
+// grow or shrink and reweigh, its edge irregularity and internal density are drawn from nearby noise, and its threshold
+// shifts slightly. Seeded by depth, so the alternates are the same on every load.
+function residueStates(spec, amount) {
+  const random = mulberry32(Math.round(spec.depth * 131) + 7);
+  const signed = () => random() * 2 - 1;
+  const states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0 }];
+
+  for (let index = 0; index < 2; index += 1) {
+    states.push({
+      masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0]) => [
+        mx + amount * 0.3 * rx * signed(),
+        my + amount * 0.3 * ry * signed(),
+        rx * (1 + amount * 0.15 * signed()),
+        ry * (1 + amount * 0.15 * signed()),
+        weight * (1 + amount * 0.12 * signed()),
+        angle + amount * 0.2 * signed()
+      ]),
+      warp: [amount * 0.5 * signed(), amount * 0.5 * signed()],
+      density: [amount * 0.7 * signed(), amount * 0.7 * signed()],
+      bias: amount * 0.06 * signed()
+    });
+  }
+
+  return states;
+}
+
 // Washed charcoal / erasure density, stored as an alpha map.
 // Noise is sampled in world units, so deeper layers carry finer detail on screen (a texture gradient cue).
 // Layers away from the fixation depth are generated softer: focus as a depth cue.
 // The map covers only the region its masses can reach (placed on the plane through the texture offset and repeat), so
 // resolution is spent where residue is. It is built a row at a time, so generation can be spread across frames.
-function* residueJob(spec, aspect) {
+// With alternate states the composed state goes to G, which is what an ordinary alpha map reads, and the others to R
+// and B; the costly material body is computed once for all of them.
+function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0 }]) {
   const focusBlur = clamp(Math.abs(spec.depth - FIXATION_DEPTH) / FIXATION_DEPTH, 0, 1);
   const blur = residueBlur(spec);
   // Veils stay broad; stains may keep structure down to about two texels, so their edges break up rather than round off.
@@ -403,14 +445,16 @@ function* residueJob(spec, aspect) {
   let right = 0;
   let bottom = 1;
   let top = 0;
-  for (const [mx, my, rx, ry, weight, angle = 0] of spec.masses) {
-    const reach = Math.sqrt(Math.max(0, Math.log(weight / 0.004)));
-    const ex = reach * Math.hypot(rx * Math.cos(angle), ry * Math.sin(angle));
-    const ey = reach * Math.hypot(rx * Math.sin(angle), ry * Math.cos(angle));
-    left = Math.min(left, 0.5 + (mx - ex) / compose / (2 * COVER) - 3 / planeCols);
-    right = Math.max(right, 0.5 + (mx + ex) / compose / (2 * COVER) + 3 / planeCols);
-    bottom = Math.min(bottom, 0.5 + (my - ey) / (2 * COVER) - 3 / planeRows);
-    top = Math.max(top, 0.5 + (my + ey) / (2 * COVER) + 3 / planeRows);
+  for (const state of states) {
+    for (const [mx, my, rx, ry, weight, angle = 0] of state.masses) {
+      const reach = Math.sqrt(Math.max(0, Math.log(weight / 0.004)));
+      const ex = reach * Math.hypot(rx * Math.cos(angle), ry * Math.sin(angle));
+      const ey = reach * Math.hypot(rx * Math.sin(angle), ry * Math.cos(angle));
+      left = Math.min(left, 0.5 + (mx - ex) / compose / (2 * COVER) - 3 / planeCols);
+      right = Math.max(right, 0.5 + (mx + ex) / compose / (2 * COVER) + 3 / planeCols);
+      bottom = Math.min(bottom, 0.5 + (my - ey) / (2 * COVER) - 3 / planeRows);
+      top = Math.max(top, 0.5 + (my + ey) / (2 * COVER) + 3 / planeRows);
+    }
   }
   left = Math.max(0, left);
   right = Math.min(1, right);
@@ -419,9 +463,9 @@ function* residueJob(spec, aspect) {
 
   const width = Math.max(8, Math.ceil((right - left) * planeCols));
   const height = Math.max(8, Math.ceil((top - bottom) * planeRows));
-  const field = new Float32Array(width * height).fill(-4);
+  const fields = states.map(() => new Float32Array(width * height).fill(-4));
+  const rests = states.map(() => new Float32Array(width * height));
   const edges = new Float32Array(width * height);
-  const rest = new Float32Array(width * height);
 
   for (let j = 0; j < height; j += 1) {
     const v = bottom + ((j + 0.5) / height) * (top - bottom);
@@ -434,7 +478,9 @@ function* residueJob(spec, aspect) {
       const fade = fadeY * edgeFade(u);
       const x = (u - 0.5) * 2 * COVER;
 
-      if (fade <= 0 || composition(spec.masses, x * compose, y) < 0.004) continue;
+      let reachable = 0;
+      for (const state of states) reachable = Math.max(reachable, composition(state.masses, x * compose, y));
+      if (fade <= 0 || reachable < 0.004) continue;
 
       const px = x * aspect * freq;
       const py = y * freq;
@@ -444,43 +490,54 @@ function* residueJob(spec, aspect) {
       const warpY = fbm(rx + 8.3, ry + 2.8, 3, cell, limit);
       // Broad, independent fields: where fine structure is worked up or left smooth, and where density is uneven.
       const detail = lerp(0.35, 1.15, smoothstep(-0.4, 0.4, fbm(rx * 0.22 - 6.3, ry * 0.22 + 2.9, 2, cell / 0.22, limit)));
-      const uneven = lerp(0.5, 1.5, smoothstep(-0.4, 0.4, fbm(rx * 0.3 + 4.7, ry * 0.3 - 8.1, 2, cell / 0.3, limit)));
 
-      // Masses only set how much residue a region holds; they never draw an outline.
-      // Edges come from the internal strata, so nothing reads as a bounded object.
-      const mass = composition(spec.masses, (x + warpX * 0.16) * compose, y + warpY * 0.07);
+      // The material body is shared by every state.
       const body = fbm(rx + warpX * spec.warp, ry + warpY * spec.warp, 5, cell, limit, character, detail, warpX * spec.warp * 0.7, warpY * spec.warp * 0.7);
 
       // Edge quality wanders: pressed charcoal in places, feathered wash in others.
       edges[k] = edge * lerp(0.2, 1.8, smoothstep(-0.45, 0.45, fbm(rx * 0.55 + 9.1, ry * 0.55 - 4.3, 2, cell / 0.55, limit)));
-      field[k] = body * spec.rough + lerp(-0.45, 0.8, mass);
-      let amount = smoothstep(0.03, 0.6, mass) * fade;
 
+      let cut = 1;
       if (spec.cut) {
         const [nx, ny, offset] = spec.cut;
         const along = nx * x + ny * y - offset + warpY * 0.07 + warpX * 0.03;
         const soft = 0.02 + focusBlur * 0.04 + 0.03 * smoothstep(-0.3, 0.5, warpX);
-        amount *= smoothstep(-soft, soft, along);
+        cut = smoothstep(-soft, soft, along);
       }
 
-      if (amount <= 0.002 || field[k] < -1.2) continue;
+      let erased = -1;
+      let grained = -1;
+      for (let s = 0; s < states.length; s += 1) {
+        const state = states[s];
+        const [shiftX, shiftY] = state.warp;
+        const [denseX, denseY] = state.density;
+        const edgeX = s === 0 ? warpX : fbm(rx + 1.7 + shiftX, ry + 9.2 + shiftY, 3, cell, limit);
+        const edgeY = s === 0 ? warpY : fbm(rx + 8.3 + shiftX, ry + 2.8 + shiftY, 3, cell, limit);
 
-      // Internal density: broad and uneven rather than an even grain, following the layer's own direction like a wiped
-      // wash. It is held back from the finest scales, where it read as a stippled surface or as hatching.
-      const inner = Math.min(1, spec.inner * uneven);
-      const density = fbm(rx * 1.7 + 5.1, ry * 2 - 3.3, 2, cell / 2, limit * 1.5);
-      amount *= 1 - inner + inner * smoothstep(-0.55, 0.6, density);
+        // Masses only set how much residue a region holds; they never draw an outline.
+        // Edges come from the internal strata, so nothing reads as a bounded object.
+        const mass = composition(state.masses, (x + edgeX * 0.16) * compose, y + edgeY * 0.07);
+        fields[s][k] = body * spec.rough + lerp(-0.45, 0.8, mass) + state.bias;
+        let amount = smoothstep(0.03, 0.6, mass) * fade * cut;
+        if (amount <= 0.002 || fields[s][k] < -1.2) continue;
 
-      if (spec.erase > 0) {
-        // Erasure runs in long wiped passes; kept broader than the softness so it never resolves into scratched lines.
-        const wipe = fbm(rx * 0.4 + 2.2, ry * 5, 2, cell / 5, limit * 1.8);
-        amount *= 1 - spec.erase * smoothstep(0.1, 0.55, wipe);
+        // Internal density: broad and uneven rather than an even grain, following the layer's own direction like a wiped
+        // wash. It is held back from the finest scales, where it read as a stippled surface or as hatching.
+        const uneven = lerp(0.5, 1.5, smoothstep(-0.4, 0.4, fbm(rx * 0.3 + 4.7 + denseX, ry * 0.3 - 8.1 + denseY, 2, cell / 0.3, limit)));
+        const inner = Math.min(1, spec.inner * uneven);
+        const density = fbm(rx * 1.7 + 5.1 + denseX, ry * 2 - 3.3 + denseY, 2, cell / 2, limit * 1.5);
+        amount *= 1 - inner + inner * smoothstep(-0.55, 0.6, density);
+
+        if (spec.erase > 0) {
+          // Erasure runs in long wiped passes; kept broader than the softness so it never resolves into scratched lines.
+          if (erased < 0) erased = 1 - spec.erase * smoothstep(0.1, 0.55, fbm(rx * 0.4 + 2.2, ry * 5, 2, cell / 5, limit * 1.8));
+          amount *= erased;
+        }
+
+        // A much weaker fine grain, only where the raster and softness can hold it; its mean stays the same without it.
+        if (grained < 0) grained = 0.88 + 0.09 * smoothstep(limit * 1.5, limit * 2.4, cell / 9.7) * detail * noise(rx * 9.7, ry * 9.7);
+        rests[s][k] = amount * grained;
       }
-
-      // A much weaker fine grain, only where the raster and softness can hold it; its mean stays the same without it.
-      const grain = smoothstep(limit * 1.5, limit * 2.4, cell / 9.7) * detail;
-      amount *= 0.88 + 0.09 * grain * noise(rx * 9.7, ry * 9.7);
-      rest[k] = amount;
     }
     yield;
   }
@@ -490,22 +547,35 @@ function* residueJob(spec, aspect) {
   // and defocused layers cannot open crisp hairline gaps.
   const spread = Math.max(0.9, (0.8 * blur) / texel);
   const data = new Uint8Array(width * height * 4);
+  // Channels per state: the composed state in G; alternates in R and B (a single state fills all three).
+  const channels = states.length === 1 ? [[0, 1, 2]] : [[1], [0], [2]];
   for (let j = 0; j < height; j += 1) {
     for (let i = 0; i < width; i += 1) {
       const k = j * width + i;
-      data[k * 4 + 3] = 255;
-      if (rest[k] <= 0) continue;
+      if (states.length === 1) data[k * 4 + 3] = 255;
+      else {
+        // Alpha holds the order in which parts of the field change: broad, irregular lobes, so a change advances
+        // through the field rather than dissolving all of it at once.
+        const x = (left + ((i + 0.5) / width) * (right - left) - 0.5) * 2 * COVER * aspect + spec.depth * 3.1;
+        const y = (bottom + ((j + 0.5) / height) * (top - bottom) - 0.5) * 2 * COVER - spec.depth * 1.7;
+        const order = 0.5 + 0.9 * (0.65 * noise(x * 1.4, y * 1.4) + 0.35 * noise(x * 2.9 + 7.3, y * 2.9 - 4.1));
+        data[k * 4 + 3] = Math.round(clamp(order, 0, 1) * 255);
+      }
 
-      const f = field[k];
-      const east = i + 1 < width && field[k + 1] > -4 ? field[k + 1] : f;
-      const west = i > 0 && field[k - 1] > -4 ? field[k - 1] : f;
-      const north = j + 1 < height && field[k + width] > -4 ? field[k + width] : f;
-      const south = j > 0 && field[k - width] > -4 ? field[k - width] : f;
-      const soft = Math.max(edges[k], spread * Math.hypot(east - west, north - south) * 0.5);
-      const value = Math.round(clamp(smoothstep(-soft, soft, f) * rest[k], 0, 1) * 255);
-      data[k * 4] = value;
-      data[k * 4 + 1] = value;
-      data[k * 4 + 2] = value;
+      for (let s = 0; s < states.length; s += 1) {
+        const field = fields[s];
+        const rest = rests[s];
+        if (rest[k] <= 0) continue;
+
+        const f = field[k];
+        const east = i + 1 < width && field[k + 1] > -4 ? field[k + 1] : f;
+        const west = i > 0 && field[k - 1] > -4 ? field[k - 1] : f;
+        const north = j + 1 < height && field[k + width] > -4 ? field[k + width] : f;
+        const south = j > 0 && field[k - width] > -4 ? field[k - width] : f;
+        const soft = Math.max(edges[k], spread * Math.hypot(east - west, north - south) * 0.5);
+        const value = Math.round(clamp(smoothstep(-soft, soft, f) * rest[k], 0, 1) * 255);
+        for (const channel of channels[s]) data[k * 4 + channel] = value;
+      }
     }
     yield;
   }
@@ -626,6 +696,46 @@ if (renderer) {
     mesh.visible = false;
     scene.add(mesh);
 
+    // An evolving field reads its map as one of its three stored states, or partway from one to another: each part of
+    // the field changes when the transition reaches it in the stored order. Only this read of the map is replaced.
+    let morph = null;
+    if (MORPH_LAYERS.includes(source.depth)) {
+      const uniforms = {
+        stateFrom: { value: new Vector3(0, 1, 0) },
+        stateTo: { value: new Vector3(0, 1, 0) },
+        stateProgress: { value: 0 },
+        stateAmount: { value: 1 }
+      };
+      material.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, uniforms);
+        shader.fragmentShader =
+          "uniform vec3 stateFrom;\nuniform vec3 stateTo;\nuniform float stateProgress;\nuniform float stateAmount;\n" +
+          shader.fragmentShader.replace(
+            "#include <alphamap_fragment>",
+            [
+              "#ifdef USE_ALPHAMAP",
+              "\tvec4 states = texture2D( alphaMap, vAlphaMapUv );",
+              "\tfloat reached = smoothstep( states.a - 0.3, states.a + 0.3, stateProgress * 1.6 - 0.3 );",
+              "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
+              "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );",
+              "#endif"
+            ].join("\n")
+          );
+      };
+      material.customProgramCacheKey = () => "residue-states";
+      morph = {
+        states: residueStates(spec, MORPH.amount),
+        uniforms,
+        state: 0,
+        next: 0,
+        moving: false,
+        elapsed: 0,
+        duration: 0,
+        // Staggered, so the fields never begin together.
+        wait: rand(4, 28)
+      };
+    }
+
     return {
       spec,
       mesh,
@@ -634,9 +744,14 @@ if (renderer) {
       haze: smoothstep(FOG_NEAR, FOG_FAR, source.depth),
       appear: 0,
       seed: index * 2.39 + 0.7,
-      driftRate: rand(0.8, 1.25)
+      driftRate: rand(0.8, 1.25),
+      morph
     };
   });
+  const evolving = layers.filter((layer) => layer.morph);
+  // Channel of each stored state: composed (G), first alternate (R), second alternate (B).
+  const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
+  let morphStrength = state.reducedMotion ? MORPH.reduced : 1;
 
   const traceMaps = [traceTexture(false, false), traceTexture(true, false), traceTexture(false, true), traceTexture(true, true)];
   const traceFragments = [];
@@ -745,7 +860,7 @@ if (renderer) {
 
     while (state.buildQueue.length && performance.now() < until) {
       const layer = state.buildQueue[0];
-      if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect);
+      if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect, layer.morph ? layer.morph.states : undefined);
 
       const { done, value } = state.buildJob.next();
       if (!done) continue;
@@ -1224,6 +1339,53 @@ if (renderer) {
     return scale;
   }
 
+  // Each evolving field holds a state, then slowly moves to another: usually the other alternate, sometimes back to the
+  // composed state, never on a fixed round. At most two fields change at once. Changes pause, without snapping, while
+  // depth is flattened, and none begins during a global recalibration.
+  function updateMorph(dt) {
+    morphStrength = lerp(morphStrength, state.reducedMotion ? MORPH.reduced : 1, 1 - Math.exp(-dt / 5));
+    const clock = dt * (1 - smoothstep(0.5, 0.9, state.params.align)) * (state.reducedMotion ? 0.7 : 1);
+    let moving = 0;
+    for (let index = 0; index < evolving.length; index += 1) if (evolving[index].morph.moving) moving += 1;
+
+    for (let index = 0; index < evolving.length; index += 1) {
+      const morph = evolving[index].morph;
+      morph.elapsed += clock;
+
+      const { uniforms } = morph;
+      if (!morph.moving) {
+        const free = moving < MORPH.concurrent && !spatialFrame.duration && state.ready;
+        if (morph.elapsed >= morph.wait && free) {
+          morph.next = morph.state === 0 ? (Math.random() < 0.5 ? 1 : 2) : Math.random() < 0.4 ? 0 : 3 - morph.state;
+          uniforms.stateFrom.value.fromArray(STATE_CHANNELS[morph.state]);
+          uniforms.stateTo.value.fromArray(STATE_CHANNELS[morph.next]);
+          uniforms.stateProgress.value = 0;
+          morph.duration = rand(...MORPH.transition);
+          morph.elapsed = 0;
+          morph.moving = true;
+          moving += 1;
+        } else if (morph.elapsed >= morph.wait) {
+          morph.wait = morph.elapsed + rand(3, 8);
+        }
+      } else {
+        const u = Math.min(1, morph.elapsed / morph.duration);
+        uniforms.stateProgress.value = smoothstep(0, 1, u);
+        if (u >= 1) {
+          morph.state = morph.next;
+          uniforms.stateFrom.value.fromArray(STATE_CHANNELS[morph.state]);
+          uniforms.stateProgress.value = 0;
+          morph.moving = false;
+          morph.elapsed = 0;
+          morph.wait = rand(...MORPH.hold);
+          moving -= 1;
+        }
+      }
+
+      // Reduced motion keeps the change but takes each state only part of the way from the composed one.
+      uniforms.stateAmount.value = morphStrength;
+    }
+  }
+
   function updateLayers(dt) {
     const drift = state.params.drift * (state.reducedMotion ? 0.25 : 1);
     const t = state.time;
@@ -1314,6 +1476,7 @@ if (renderer) {
     updateCamera(dt * timeScale);
     updateSpatialFrame(dt);
     projectSpatialFrame();
+    updateMorph(dt);
     updateLayers(dt);
     updateTraces();
     updateText(dt);
