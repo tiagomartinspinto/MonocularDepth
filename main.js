@@ -2,10 +2,8 @@ import {
   CanvasTexture,
   Color,
   DataTexture,
-  Fog,
   LinearFilter,
   LinearMipmapLinearFilter,
-  Matrix4,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
@@ -60,7 +58,6 @@ const TONE = {
   graphite: 0x6d6a63,
   charcoal: 0x3d3b37,
   ink: 0x211f1c,
-  trace: 0x4a4843,
   text: 0x3a3833
 };
 
@@ -102,29 +99,6 @@ const LAYERS = [
     masses: [[-0.5, -0.4, 0.34, 0.4, 1], [0.62, 0.45, 0.3, 0.3, 0.7]] }
 ];
 
-// Trace structures: incomplete spatial correspondences rather than drawn lines.
-// Each structure is a screen line [x, y, angleDeg] as seen from its own transient viewpoint (near the camera path).
-// Fragments [t0, t1, depth0, depth1] recede through real depth along rays from that viewpoint, so they taper and
-// lose focus with distance, sort against residue and veils, and only line up as the camera passes the viewpoint.
-// Viewpoints and angles differ per structure, so the implied alignments never share one perspective centre.
-const TRACES = [
-  { viewpoint: [0.3, -0.05, 0.1], line: [-0.62, 0.5, -24], opacity: 0.64,
-    fragments: [[0, 1.2, 6.5, 13], [1.32, 1.5, 15, 17]] },
-  { viewpoint: [-0.22, -0.06, 0.05], line: [0.12, -0.28, -20], opacity: 0.64,
-    fragments: [[-0.22, -0.1, 13.5, 13], [0, 0.8, 11, 7]] },
-  { viewpoint: [-0.2, 0.05, 0], line: [0.6, 0.7, -100], opacity: 0.6,
-    fragments: [[0, 0.45, 5.8, 12]] },
-  { viewpoint: [0.25, 0.04, 0.12], line: [-0.86, -0.74, 36], opacity: 0.62,
-    fragments: [[0, 0.3, 5.2, 6.4], [0.38, 0.46, 14, 15]] },
-  { viewpoint: [0.18, 0.02, -0.12], line: [0.22, -0.4, 70], opacity: 0.62,
-    fragments: [[0, 0.3, 9.5, 12]] }
-];
-// Width in pixels at 1080 lines at the fixation depth; perspective tapers it with distance, and material nearer than
-// fixation spreads out of focus (wider, paler), so near portions read as defocused rather than drawn.
-const TRACE_WIDTH_PX = 4;
-// Receding fragments are split into pieces no deeper than this, so each piece sorts correctly against the layers.
-const TRACE_PIECE_DEPTH = 1.6;
-
 // Depth is legible, becomes uncertain, flattens, then forms again. Durations are loose so it never reads as a loop.
 // Each phase eases from wherever the previous one left off to its target over `transition` seconds, then holds.
 // align: parallax cancellation onto one shared plane (FLAT_DEPTH). drift: independent layer wandering.
@@ -134,25 +108,25 @@ const PHASES = {
     duration: [55, 80],
     transition: 28,
     next: "uncertain",
-    target: { align: 0, drift: 0.15, compress: 0, veil: 0, trace: 1 }
+    target: { align: 0, drift: 0.15, compress: 0, veil: 0 }
   },
   uncertain: {
     duration: [30, 40],
     transition: 26,
     next: "flat",
-    target: { align: 0.4, drift: 0.08, compress: 0.45, veil: 0.2, trace: 0.4 }
+    target: { align: 0.4, drift: 0.08, compress: 0.45, veil: 0.2 }
   },
   flat: {
     duration: [42, 50],
     transition: 22,
     next: "forming",
-    target: { align: 1, drift: 0, compress: 1, veil: 0.05, trace: 0 }
+    target: { align: 1, drift: 0, compress: 1, veil: 0.05 }
   },
   forming: {
     duration: [36, 46],
     transition: 34,
     next: "legible",
-    target: { align: 0, drift: 0.15, compress: 0, veil: 0, trace: 0.85 }
+    target: { align: 0, drift: 0.15, compress: 0, veil: 0 }
   }
 };
 
@@ -591,37 +565,6 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
   return texture;
 }
 
-// Trace cross-section is a soft gaussian, so a wider quad reads as a less focused line rather than a thicker stroke.
-// Only a fragment's true ends dissolve; pieces inside a fragment join without a seam.
-function traceTexture(fadeStart, fadeEnd) {
-  const width = 16;
-  const height = 256;
-  const data = new Uint8Array(width * height * 4);
-
-  for (let j = 0; j < height; j += 1) {
-    const v = (j + 0.5) / height;
-    const along = (fadeStart ? smoothstep(0, 0.35, v) : 1) * (fadeEnd ? smoothstep(0, 0.45, 1 - v) : 1);
-
-    for (let i = 0; i < width; i += 1) {
-      const offset = ((i + 0.5) / width - 0.5) * 2;
-      const value = Math.round(clamp(along * Math.exp(-offset * offset * 4.5), 0, 1) * 255);
-      const k = (j * width + i) * 4;
-      data[k] = value;
-      data[k + 1] = value;
-      data[k + 2] = value;
-      data[k + 3] = 255;
-    }
-  }
-
-  const texture = new DataTexture(data, width, height, RGBAFormat);
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
-
-  return texture;
-}
-
 let renderer;
 
 try {
@@ -633,7 +576,6 @@ try {
 if (renderer) {
   const scene = new Scene();
   const camera = new PerspectiveCamera(FOV, 1, 0.1, 80);
-  const fog = new Fog(TONE.field, FOG_NEAR, FOG_FAR);
   const fieldColor = new Color(TONE.field).getRGB({}, SRGBColorSpace);
   // Same curve and blend space as Three.js linear fog (mixed after sRGB output conversion),
   // so legible layers keep exactly the tone they had under scene fog.
@@ -642,7 +584,6 @@ if (renderer) {
   const fixation = new Vector3(0, 0, -FIXATION_DEPTH);
   const fixationTarget = fixation.clone();
   const fixationEase = fixation.clone();
-  const basis = new Matrix4();
 
   const state = {
     width: 1,
@@ -655,8 +596,8 @@ if (renderer) {
     phaseElapsed: 0,
     phaseDuration: rand(...PHASES.forming.duration),
     // The volume first assembles out of a flattened state.
-    phaseFrom: { align: 0.7, drift: 0, compress: 0.8, veil: 0, trace: 0 },
-    params: { align: 0.7, drift: 0, compress: 0.8, veil: 0, trace: 0 },
+    phaseFrom: { align: 0.7, drift: 0, compress: 0.8, veil: 0 },
+    params: { align: 0.7, drift: 0, compress: 0.8, veil: 0 },
     fixationRemaining: rand(18, 34),
     buildQueue: [],
     buildJob: null,
@@ -753,52 +694,6 @@ if (renderer) {
   const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
   let morphStrength = state.reducedMotion ? MORPH.reduced : 1;
 
-  const traceMaps = [traceTexture(false, false), traceTexture(true, false), traceTexture(false, true), traceTexture(true, true)];
-  const traceFragments = [];
-  const traceSegments = [];
-
-  for (let index = 0; index < TRACES.length; index += 1) {
-    const trace = TRACES[index];
-
-    for (let f = 0; f < trace.fragments.length; f += 1) {
-      const [t0, t1, depth0, depth1] = trace.fragments[f];
-      const fragment = {
-        trace,
-        lag: rand(0, 0.45),
-        rateA: TAU / rand(45, 85),
-        rateB: TAU / rand(95, 150),
-        phaseA: rand(0, TAU),
-        phaseB: rand(0, TAU),
-        opacity: 0
-      };
-      const pieces = Math.max(1, Math.ceil(Math.abs(depth1 - depth0) / TRACE_PIECE_DEPTH));
-      traceFragments.push(fragment);
-
-      for (let p = 0; p < pieces; p += 1) {
-        const a = p / pieces;
-        const b = (p + 1) / pieces;
-        const material = new MeshBasicMaterial({
-          color: new Color(TONE.trace),
-          alphaMap: traceMaps[(p === 0 ? 1 : 0) + (p === pieces - 1 ? 2 : 0)],
-          transparent: true,
-          depthWrite: false,
-          opacity: 0
-        });
-        const mesh = new Mesh(new PlaneGeometry(1, 1), material);
-        mesh.visible = false;
-        scene.add(mesh);
-        traceSegments.push({
-          fragment,
-          from: [lerp(t0, t1, a), lerp(depth0, depth1, a)],
-          to: [lerp(t0, t1, b), lerp(depth0, depth1, b)],
-          mesh,
-          material,
-          focus: 1
-        });
-      }
-    }
-  }
-
   const textCanvas = document.createElement("canvas");
   textCanvas.width = TEXT_CANVAS_WIDTH;
   textCanvas.height = TEXT_CANVAS_HEIGHT;
@@ -843,7 +738,6 @@ if (renderer) {
   const probe = new Vector3();
   const layerCentre = new Vector3();
 
-  scene.fog = fog;
   renderer.setClearColor(TONE.field, 1);
   textTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -873,55 +767,6 @@ if (renderer) {
       layer.mesh.visible = true;
       if (previous) previous.dispose();
       if (!state.buildQueue.length) state.ready = true;
-    }
-  }
-
-  // Point at `depth` on the ray from a structure's viewpoint through screen position t along its line.
-  function tracePoint(trace, t, depth) {
-    const [vx, vy, vz] = trace.viewpoint;
-    const [x, y, angle] = trace.line;
-    const radians = (angle * Math.PI) / 180;
-    const fx = x + (t * Math.cos(radians)) / NOMINAL_ASPECT;
-    const fy = y + t * Math.sin(radians);
-    const reach = depth + vz;
-
-    return new Vector3(vx + fx * HALF_TAN * NOMINAL_ASPECT * reach, vy + fy * HALF_TAN * reach, -depth);
-  }
-
-  function layoutTraces() {
-    const cameraAtRest = new Vector3(0, 0, 0);
-
-    for (let index = 0; index < traceSegments.length; index += 1) {
-      const segment = traceSegments[index];
-      const trace = segment.fragment.trace;
-      const start = tracePoint(trace, segment.from[0], segment.from[1]);
-      const end = tracePoint(trace, segment.to[0], segment.to[1]);
-      const mid = start.clone().add(end).multiplyScalar(0.5);
-      const dir = end.clone().sub(start);
-      const length = dir.length();
-      dir.normalize();
-      const normal = cameraAtRest.clone().sub(mid);
-      normal.sub(dir.clone().multiplyScalar(normal.dot(dir))).normalize();
-      const side = dir.clone().cross(normal);
-
-      basis.makeBasis(side, dir, normal);
-      segment.mesh.quaternion.setFromRotationMatrix(basis);
-      segment.mesh.position.copy(mid);
-      // Each piece is a trapezoid, so width changes continuously along a fragment instead of stepping between pieces.
-      const blurStart = clamp((FIXATION_DEPTH - segment.from[1]) / 3, 0, 1);
-      const blurEnd = clamp((FIXATION_DEPTH - segment.to[1]) / 3, 0, 1);
-      const pixel = (TRACE_WIDTH_PX * 2 * HALF_TAN * FIXATION_DEPTH) / 1080;
-      const halfStart = (pixel * (1 + 1.1 * blurStart)) / 2;
-      const halfEnd = (pixel * (1 + 1.1 * blurEnd)) / 2;
-      const positions = segment.mesh.geometry.attributes.position;
-      positions.setXYZ(0, -halfEnd, 0.5, 0);
-      positions.setXYZ(1, halfEnd, 0.5, 0);
-      positions.setXYZ(2, -halfStart, -0.5, 0);
-      positions.setXYZ(3, halfStart, -0.5, 0);
-      positions.needsUpdate = true;
-      segment.mesh.scale.set(1, length, 1);
-      // Defocused near pieces spread their tone rather than darkening.
-      segment.focus = lerp(1, 0.45, (blurStart + blurEnd) / 2);
     }
   }
 
@@ -1428,25 +1273,6 @@ if (renderer) {
     }
   }
 
-  function updateTraces() {
-    const presence = state.ready ? state.params.trace : 0;
-
-    for (let index = 0; index < traceFragments.length; index += 1) {
-      const fragment = traceFragments[index];
-      const pulse =
-        0.6 * Math.sin(state.time * fragment.rateA + fragment.phaseA) +
-        0.4 * Math.sin(state.time * fragment.rateB + fragment.phaseB);
-      const arrival = smoothstep(fragment.lag, fragment.lag + 0.55, presence);
-      fragment.opacity = fragment.trace.opacity * arrival * smoothstep(-0.45, 0.35, pulse);
-    }
-
-    for (let index = 0; index < traceSegments.length; index += 1) {
-      const segment = traceSegments[index];
-      segment.material.opacity = segment.fragment.opacity * segment.focus;
-      segment.mesh.visible = segment.material.opacity > 0.003;
-    }
-  }
-
   function updateText(dt) {
     const envelope = updateSentence(dt);
     if (!textMesh.visible) return;
@@ -1478,7 +1304,6 @@ if (renderer) {
     projectSpatialFrame();
     updateMorph(dt);
     updateLayers(dt);
-    updateTraces();
     updateText(dt);
   }
 
@@ -1542,8 +1367,6 @@ if (renderer) {
 
   canvas.dataset.phase = state.phase;
   canvas.dataset.layers = String(layers.length);
-  canvas.dataset.traces = String(traceFragments.length);
-  layoutTraces();
   resize();
   start();
 }

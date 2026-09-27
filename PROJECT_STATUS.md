@@ -10,7 +10,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Layer planes cover 1.5x the view at their depth and fade to zero alpha before their edges, so plane boundaries are not visible.
 - Depth cues are built into the volume itself: occlusion by field-coloured veils with wavering cut edges, fog as aerial perspective, finer texture detail with distance, softer layers away from the fixation depth.
 - Autonomous camera parallax: tiny lateral, vertical and forward drift while holding a mid-depth fixation, with occasional slow re-fixation. Near and far material slide in opposite directions.
-- Depth cycle, loosely timed and non-repeating: legible, uncertain (relative motion begins converging, veils thicken, traces fade), flat (layers collapse onto one shared plane), then space forms again.
+- Depth cycle, loosely timed and non-repeating: legible, uncertain (relative motion begins converging and veils thicken), flat (layers collapse onto one shared plane), then space forms again.
 - Flattening now reaches and holds near-full parallax cancellation: each phase eases to its target and holds, giving a flat plateau of roughly 18-27 seconds at full alignment. The image still moves as one sheet during the plateau.
 - Independent layer drift is suppressed during the flat phase and returns slowly as depth re-forms.
 - Depth contrast is compressed during flat without revealing additional far layers: nearer layers take on mid-depth tone and strength, while far haze is left unchanged.
@@ -19,10 +19,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Depth cues are distributed independently of screen height: near, defocused material sits high as well as low, and small crisp distant material sits high as well as low.
 - Negative space was rebalanced away from a sky/horizon/ground reading into irregular open areas; text regions were moved to follow the new open areas.
 - Genuine Z-depth and flattening behavior were preserved (alignment still reaches 1.0 with a near-motionless flat plateau of roughly 21-27 seconds).
-- Perspective traces were revised from isolated scratch-like hairlines into 5 sparse spatial fragment structures (8 fragments). Each structure's fragments sit on rays from its own transient viewpoint near the camera path, so they only briefly line up and otherwise slide apart; no two structures share a perspective centre.
-- Traces use depth, occlusion, and parallax as part of the spatial field: fragments recede through real depth, taper with perspective, spread out of focus in front of the fixation depth, fade into haze, and sort against residue and veils (split into short depth pieces so they pass behind or in front correctly).
-- Traces diminish during flattening and return individually, not in sync, as depth re-forms.
-- Composition, camera, phases, and flattening mechanisms remain otherwise unchanged by the trace revision.
+- The trace field has been removed completely; evolving residue, spatial depth, flattening, recalibration, and occasional text now carry the composition.
 - Rare English sentence kept (same word banks and templates): one sentence maximum, long intervals, slow fade in, brief presence, slow fade out, placed in the scene at a shallow depth where it can be partly veiled.
 - The sentence layer now occupies real scene depth: each sentence sits between existing layers (about 5.5 to 11 units, never on a layer's plane), so it sorts against residue and veils and shares the camera parallax and flattening like everything else.
 - Placement starts from the existing text zones but reads the built residue and veil maps along the sight line, so a sentence is often partly behind a veil or close to residue rather than always in empty space; readability is checked first and recent positions are avoided.
@@ -33,7 +30,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 - Visible edge aliasing and stair-stepping were removed at the source: noise is no longer generated finer than the raster that carries it, and edges are resolved against the local gradient so thresholds cannot step from texel to texel when magnified.
 - Residue generation was varied to reduce repeated procedural signatures: each layer has its own fine-octave character, fine structure is not sheared into streaks or filaments, and internal density is broad and uneven rather than an even grain. Silhouettes and composition are unchanged.
 - No new rendering dependencies, shaders, or post-processing were introduced; residue is still generated procedurally on the CPU as alpha maps.
-- Strictly monochrome warm tonal ladder: off-white field, graphite, charcoal, ink, trace, and text tones. No colour.
+- Strictly monochrome warm tonal ladder: off-white field, graphite, charcoal, ink, and text tones. No colour.
 - No visible 3D primitives, particles, dots, grids, wireframes, network graphs, or post-processing.
 - No user interaction: no controls, no pointer, touch, or keyboard handling, no OrbitControls.
 - Rendering capped at 30 fps (20 fps with reduced motion), device pixel ratio capped at 1.5, animation stopped while the document is hidden.
@@ -108,7 +105,7 @@ Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D ca
 
 - `node --check main.js` passes.
 - Local page loads in headless Chrome with no console errors or warnings.
-- Scene renders 13 layers and 8 trace fragments; measured differential parallax between near and far layers in the legible phase, converging in the flat phase.
+- Scene renders 13 residue layers and no trace fragments; measured differential parallax between near and far layers in the legible phase, converging in the flat phase.
 - Rendered pixels are warm neutral only (maximum saturation about 0.1, which is the off-white field and warm greys).
 - No DOM text or controls; only `resize`, `visibilitychange`, and WebGL context listeners are registered.
 - No animation frames while the document is hidden; rendering resumes when visible.
