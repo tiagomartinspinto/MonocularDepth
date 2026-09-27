@@ -162,31 +162,37 @@ const TEXT_REGIONS = [
   [-0.2, 0.25, 0.56, 0.7]
 ];
 
-const SUBJECTS = [
-  "the room", "the wall", "the image", "the window", "the floor", "the corner",
-  "the horizon", "the surface", "the shadow", "the distance", "the memory", "the map",
-  "the object", "the eye", "the other eye", "the blind spot", "the edge", "the field"
-];
-
-const VERBS = [
-  "forgets", "delays", "misplaces", "measures", "invents", "repeats", "folds", "loses",
-  "shifts", "returns", "disappears", "hesitates", "remembers", "interrupts", "reverses"
-];
-
-const OBJECTS = [
-  "the horizon", "the room", "the image", "the shadow", "the surface", "the distance",
-  "the floor", "the window", "the corner", "the map", "the object", "the eye",
-  "the blind spot", "the edge", "the field", "silence", "depth", "perspective"
-];
-
-const QUALIFIERS = [
-  "in silence", "inside the wall", "near the horizon", "against perspective", "out of alignment",
-  "at the edge", "behind the image", "without depth", "almost in focus", "slightly aside"
-];
-
-const ADJECTIVES = [
-  "unfinished", "borrowed", "slow", "misplaced", "silent", "accidental", "folded", "soft",
-  "distant", "partial", "unstable", "shallow", "hidden", "reversed", "almost visible"
+// Authored whole, never assembled: notes made while working out where things are.
+const FRAGMENTS = [
+  "position inferred",
+  "position uncertain",
+  "depth unresolved",
+  "overlap before distance",
+  "edge separates first",
+  "distance from movement",
+  "relative motion",
+  "no relative motion",
+  "the nearer one moves more",
+  "alignment changes",
+  "same surface / different depth",
+  "which is in front",
+  "behind, probably",
+  "paler / further",
+  "no edge nearby",
+  "not yet placed",
+  "looks flat now",
+  "I look again",
+  "I use the edge",
+  "I wait for it to separate",
+  "I check the overlap",
+  "I move to compare",
+  "I tilt my head",
+  "I hold still",
+  "I count the layers",
+  "overlap",
+  "occlusion",
+  "misalignment",
+  "nearer"
 ];
 
 function clamp(value, min, max) {
@@ -546,23 +552,6 @@ function traceTexture(fadeStart, fadeEnd) {
   return texture;
 }
 
-function generateSentence() {
-  const template = Math.floor(Math.random() * 12);
-
-  if (template === 0) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)}`;
-  if (template === 1) return `${pick(SUBJECTS)} ${pick(VERBS)} ${pick(OBJECTS)} ${pick(QUALIFIERS)}`;
-  if (template === 2) return `${pick(ADJECTIVES)} ${pick(OBJECTS)}`;
-  if (template === 3) return `${pick(OBJECTS)} without ${pick(OBJECTS)}`;
-  if (template === 4) return `${pick(SUBJECTS)} inside ${pick(OBJECTS)}`;
-  if (template === 5) return `${pick(SUBJECTS)} remembers ${pick(OBJECTS)}`;
-  if (template === 6) return `${pick(SUBJECTS)} arrives in reverse`;
-  if (template === 7) return `${pick(OBJECTS)} against perspective`;
-  if (template === 8) return `${pick(SUBJECTS)} almost remembers perspective`;
-  if (template === 9) return `${pick(OBJECTS)} almost in focus`;
-  if (template === 10) return `${pick(SUBJECTS)} without depth`;
-  return `${pick(OBJECTS)} at the edge of ${pick(OBJECTS)}`;
-}
-
 let renderer;
 
 try {
@@ -727,6 +716,7 @@ if (renderer) {
     depth: 6,
     region: null,
     recent: [],
+    said: [],
     fx: 0,
     fy: 0,
     fontPx: TEXT_FONT_PX,
@@ -1063,7 +1053,10 @@ if (renderer) {
   }
 
   function beginSentence() {
-    drawSentence(generateSentence());
+    // A fragment cannot return until most of the others have been shown, about twenty minutes at the usual intervals.
+    const fragment = pick(FRAGMENTS.filter((line) => !text.said.includes(line)));
+    text.said = [fragment, ...text.said].slice(0, FRAGMENTS.length - 10);
+    drawSentence(fragment);
     text.fadeIn = rand(6, 9);
     text.hold = rand(2.2, 4);
     text.fadeOut = rand(7, 10);
