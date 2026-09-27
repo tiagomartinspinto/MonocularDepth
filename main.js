@@ -33,6 +33,13 @@ const MAX_DPR = 1.5;
 const TEXTURE_BUDGET_MS = 12;
 const FOG_NEAR = 4;
 const FOG_FAR = 24;
+// Internal frame displacement in fractions of the view's half-width, not display aspect.
+// A point at fixation stays put; nearer and farther material re-register in opposite directions.
+const RECALIBRATION = {
+  amplitude: 0.03,
+  quiet: [40, 100],
+  duration: [12, 25]
+};
 
 // One warm tonal ladder. Every step has a single role; depth moves a tone toward the field.
 const TONE = {
@@ -600,6 +607,21 @@ if (renderer) {
     lastFrame: 0
   };
 
+  // A separate clock: no phase targets or camera-path timing drive these events.
+  const spatialFrame = {
+    remaining: rand(...RECALIBRATION.quiet),
+    elapsed: 0,
+    duration: 0,
+    turn: 0,
+    from: 0,
+    peak: 0,
+    settled: 0,
+    offset: 0,
+    strength: state.reducedMotion ? 0.35 : 1,
+    projectedOffset: NaN,
+    projectedAlign: NaN
+  };
+
   const layers = LAYERS.map((source, index) => {
     const spec = { ...(source.kind === "veil" ? VEIL : STAIN), ...source };
     const color = new Color(source.kind === "veil" ? TONE.field : TONE[source.tone]);
@@ -808,6 +830,8 @@ if (renderer) {
     renderer.setSize(state.width, state.height, false);
     camera.aspect = state.aspect;
     camera.updateProjectionMatrix();
+    // renderStill() reapplies the internal frame to this fresh physical projection.
+    spatialFrame.projectedOffset = NaN;
 
     for (let index = 0; index < layers.length; index += 1) {
       const depth = layers[index].spec.depth;
@@ -1141,6 +1165,59 @@ if (renderer) {
     camera.lookAt(fixation);
   }
 
+  function updateSpatialFrame(dt) {
+    // Ease preference changes too, so enabling reduced motion cannot snap the frame.
+    spatialFrame.strength = lerp(spatialFrame.strength, state.reducedMotion ? 0.35 : 1, 1 - Math.exp(-dt / 5));
+    if (!state.ready || dt <= 0) return;
+
+    const elapsed = dt * (state.reducedMotion ? 0.5 : 1);
+    if (!spatialFrame.duration) {
+      spatialFrame.remaining -= elapsed;
+      if (spatialFrame.remaining > 0) return;
+
+      spatialFrame.from = spatialFrame.offset;
+      spatialFrame.peak = (Math.random() < 0.5 ? -1 : 1) * rand(0.7, 1);
+      spatialFrame.settled = spatialFrame.peak * rand(0.2, 0.45);
+      spatialFrame.duration = rand(...RECALIBRATION.duration);
+      spatialFrame.turn = rand(0.52, 0.72);
+      spatialFrame.elapsed = 0;
+    }
+
+    spatialFrame.elapsed = Math.min(spatialFrame.duration, spatialFrame.elapsed + elapsed);
+    const progress = spatialFrame.elapsed / spatialFrame.duration;
+    const outward = progress < spatialFrame.turn;
+    const u = outward ? progress / spatialFrame.turn : (progress - spatialFrame.turn) / (1 - spatialFrame.turn);
+    // Zero velocity and acceleration at each join; a longer disagreement and shorter partial correction.
+    const ease = u * u * u * (u * (u * 6 - 15) + 10);
+    spatialFrame.offset = outward
+      ? lerp(spatialFrame.from, spatialFrame.peak, ease)
+      : lerp(spatialFrame.peak, spatialFrame.settled, ease);
+
+    if (progress === 1) {
+      spatialFrame.duration = 0;
+      spatialFrame.remaining = rand(...RECALIBRATION.quiet);
+    }
+  }
+
+  function projectSpatialFrame() {
+    const offset = spatialFrame.offset * spatialFrame.strength * RECALIBRATION.amplitude;
+    const align = state.params.align;
+    if (offset === spatialFrame.projectedOffset && align === spatialFrame.projectedAlign) return;
+
+    // Leave focal length, aspect and in-plane dimensions alone. In camera space this adds
+    // offset * (FIXATION_DEPTH / depth - 1) to projected x: a change in registration between
+    // depths, with no zoom or horizontal rescaling of the individual residue planes or type.
+    // Blend the inverse-depth term toward FLAT_DEPTH using the existing alignment amount.
+    // At full flattening it is one shared translation, so it cannot reopen the depth cues.
+    camera.updateProjectionMatrix();
+    const projection = camera.projectionMatrix.elements;
+    projection[8] += offset * (1 - align * FIXATION_DEPTH / FLAT_DEPTH);
+    projection[12] += offset * FIXATION_DEPTH * (1 - align);
+    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+    spatialFrame.projectedOffset = offset;
+    spatialFrame.projectedAlign = align;
+  }
+
   // Parallax compensation: at align = 1 every layer shifts and scales exactly as if it sat on one shared plane.
   // The camera keeps moving and the image keeps moving, but near and far stop betraying their depths.
   function alignOffset(depth, target, from = camera.position) {
@@ -1242,6 +1319,8 @@ if (renderer) {
     state.time += dt * timeScale;
     updatePhase(dt);
     updateCamera(dt * timeScale);
+    updateSpatialFrame(dt);
+    projectSpatialFrame();
     updateLayers(dt);
     updateTraces();
     updateText(dt);
