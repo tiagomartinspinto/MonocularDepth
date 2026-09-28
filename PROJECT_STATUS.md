@@ -1,5 +1,17 @@
 # Project Status
 
+## Passing-Field Experiment
+
+Branch: `passing-clouds-test` (not merged, not pushed), from `main` at `exhibition-candidate-1`.
+
+- Eight residue fields now pass slowly across the frame in one shared oblique direction (the far fragments, the faint wash, the small upper stains, the broad far veil, and the two near soft masses); the ink, the graphite at fixation, and the veils whose cuts occlude them stay anchored, like a disturbance held on the retina while the field beyond it goes by.
+- Passage speed follows depth (nearer material passes faster), so passage is itself a monocular depth cue. Near material crosses the view in roughly 1.5 minutes, the farthest in about 6.
+- The passage is never steady: a shared slow sway lets it hesitate and gather again. While depth flattens, every field converges on one much slower shared speed, so the passage all but stalls on the flat plane and resumes as depth forms.
+- Each passing field is a stream of two long tiles. A tile that has left the frame is rebuilt from new, seeded masses of the same material and joins the back of the stream, so what arrives never repeats what left. The work still opens on its composed arrangement.
+- Evolving residue states depart further from the composed state (stronger in-place reshaping, edge and density redistribution, and a broad uneven threshold so openings form in one part of a field while another closes). Centre displacement is unchanged, so anchored fields do not travel.
+- Text placement predicts where passing fields will be while a sentence is present. Text corpus, timing, flattening, recalibration, palette, haze, occlusion, and reduced-motion handling are otherwise unchanged; reduced motion slows the passage to 30%.
+- Upstream tiles are built after the volume has assembled, nearest first, so start-up time is unchanged.
+
 ## Three.js Depth-Volume Experiment
 
 Branch: `threejs-depth-volume-test` (not merged, not pushed). The original 2D canvas implementation remains preserved on `main`.

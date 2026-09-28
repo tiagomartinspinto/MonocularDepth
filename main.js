@@ -42,8 +42,22 @@ const RECALIBRATION = {
 // map, and move between them slowly: an edge advances or retreats, density gathers in one part and thins in another, an
 // opening appears or closes. The field stays where it is and stays the same material. amount is how far the alternates
 // depart from the composed state; times are in seconds.
+// shift moves a mass by a fraction of its own radius and is kept small, so a field never travels; swell, turn and
+// reweigh reshape it in place. edge and density are how far, in noise cells, an alternate draws its edge irregularity and
+// its internal density from. bias moves the whole field's threshold; open moves it unevenly, in broad lobes, so an
+// opening forms in one part of a field while another part closes. front is the width of the band in which a change
+// passes through the field.
 const MORPH = {
   amount: 1,
+  shift: 0.3,
+  swell: 0.28,
+  turn: 0.35,
+  reweigh: 0.2,
+  edge: 1,
+  density: 1.3,
+  bias: 0.09,
+  open: 0.18,
+  front: 0.3,
   transition: [12, 30],
   hold: [8, 30],
   concurrent: 2,
@@ -51,6 +65,25 @@ const MORPH = {
 };
 // By depth: the near streaked mass, the lower-right soft mass, the ink, and the far upper-right cluster.
 const MORPH_LAYERS = [5, 6, 8, 17.5];
+// Passage: some fields are not held in place but carried slowly across the frame, all in one oblique direction, while
+// the others stay where they are, like a disturbance held on the retina while the field beyond it goes by. Each passing
+// field moves at its own depth, nearer material faster, so passage is itself a depth cue. The passage is never steady:
+// it slows and gathers again (sway), and while depth flattens every field converges on one much slower speed (flat), so
+// the passage all but stalls on the shared plane. A passing field is a stream of two long tiles: a tile that has left
+// the frame is rebuilt with new masses of the same material and joins the back of the stream, so what arrives is never
+// what left. speed is in view half-widths per second at the fixation depth; direction is in radians from the screen's
+// horizontal; length is a tile's half-length in view half-widths; clusters is how many masses a new tile may carry.
+const PASSAGE = {
+  speed: 0.012,
+  direction: -0.2,
+  sway: 0.4,
+  flat: 0.3,
+  length: 1.8,
+  clusters: [1, 3],
+  reduced: 0.3
+};
+// By depth: the far fragments, the faint wash, the small upper stains, the near soft masses and the broad far veil.
+const PASSAGE_LAYERS = [21, 17.5, 15.2, 13.2, 12.4, 11.6, 6, 5];
 
 // One warm tonal ladder. Every step has a single role; depth moves a tone toward the field.
 const TONE = {
@@ -364,25 +397,26 @@ function residueBlur(spec) {
 
 // Alternate states of one field share its material body. Only what a field holds changes: its masses move a little,
 // grow or shrink and reweigh, its edge irregularity and internal density are drawn from nearby noise, and its threshold
-// shifts slightly. Seeded by depth, so the alternates are the same on every load.
+// shifts slightly. Seeded by depth, so the alternates are the same on every load; a passing tile's by its generation too.
 function residueStates(spec, amount) {
-  const random = mulberry32(Math.round(spec.depth * 131) + 7);
+  const random = mulberry32(Math.round(spec.depth * 131) + 7 + spec.generation * 7919);
   const signed = () => random() * 2 - 1;
-  const states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0 }];
+  const states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }];
 
   for (let index = 0; index < 2; index += 1) {
     states.push({
       masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0]) => [
-        mx + amount * 0.3 * rx * signed(),
-        my + amount * 0.3 * ry * signed(),
-        rx * (1 + amount * 0.15 * signed()),
-        ry * (1 + amount * 0.15 * signed()),
-        weight * (1 + amount * 0.12 * signed()),
-        angle + amount * 0.2 * signed()
+        mx + amount * MORPH.shift * rx * signed(),
+        my + amount * MORPH.shift * ry * signed(),
+        rx * (1 + amount * MORPH.swell * signed()),
+        ry * (1 + amount * MORPH.swell * signed()),
+        weight * (1 + amount * MORPH.reweigh * signed()),
+        angle + amount * MORPH.turn * signed()
       ]),
-      warp: [amount * 0.5 * signed(), amount * 0.5 * signed()],
-      density: [amount * 0.7 * signed(), amount * 0.7 * signed()],
-      bias: amount * 0.06 * signed()
+      warp: [amount * MORPH.edge * signed(), amount * MORPH.edge * signed()],
+      density: [amount * MORPH.density * signed(), amount * MORPH.density * signed()],
+      bias: amount * MORPH.bias * signed(),
+      open: amount * MORPH.open
     });
   }
 
@@ -396,22 +430,25 @@ function residueStates(spec, amount) {
 // resolution is spent where residue is. It is built a row at a time, so generation can be spread across frames.
 // With alternate states the composed state goes to G, which is what an ordinary alpha map reads, and the others to R
 // and B; the costly material body is computed once for all of them.
-function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0 }]) {
+function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }]) {
   const focusBlur = clamp(Math.abs(spec.depth - FIXATION_DEPTH) / FIXATION_DEPTH, 0, 1);
   const blur = residueBlur(spec);
   // Veils stay broad; stains may keep structure down to about two texels, so their edges break up rather than round off.
   const limit = blur * (spec.kind === "veil" ? 1.6 : 1.45);
   const texel = clamp(blur * 0.62, 1, 3);
+  // A passing tile is longer than the view along its passage; everything else covers the view by COVER both ways.
+  const coverX = spec.cover;
   const planeRows = (COVER * 1080) / texel;
-  const planeCols = planeRows * aspect;
+  const planeCols = ((coverX * 1080) / texel) * aspect;
   const freq = spec.grain * (spec.depth / FIXATION_DEPTH);
   const cell = 540 / freq;
   const character = residueCharacter(spec);
   const edge = spec.edge + focusBlur * 0.16;
   const cosA = Math.cos(spec.tilt);
   const sinA = Math.sin(spec.tilt);
-  const offsetX = spec.depth * 17.3;
-  const offsetY = spec.depth * -11.9;
+  // Each passing tile reads its own part of the layer's material.
+  const offsetX = spec.depth * 17.3 + spec.grainOffset[0];
+  const offsetY = spec.depth * -11.9 + spec.grainOffset[1];
   // On narrow screens the composition keeps its proportions and is cropped rather than squeezed.
   const compose = Math.pow(aspect / NOMINAL_ASPECT, 0.4);
 
@@ -425,8 +462,8 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
       const reach = Math.sqrt(Math.max(0, Math.log(weight / 0.004)));
       const ex = reach * Math.hypot(rx * Math.cos(angle), ry * Math.sin(angle));
       const ey = reach * Math.hypot(rx * Math.sin(angle), ry * Math.cos(angle));
-      left = Math.min(left, 0.5 + (mx - ex) / compose / (2 * COVER) - 3 / planeCols);
-      right = Math.max(right, 0.5 + (mx + ex) / compose / (2 * COVER) + 3 / planeCols);
+      left = Math.min(left, 0.5 + (mx - ex) / compose / (2 * coverX) - 3 / planeCols);
+      right = Math.max(right, 0.5 + (mx + ex) / compose / (2 * coverX) + 3 / planeCols);
       bottom = Math.min(bottom, 0.5 + (my - ey) / (2 * COVER) - 3 / planeRows);
       top = Math.max(top, 0.5 + (my + ey) / (2 * COVER) + 3 / planeRows);
     }
@@ -451,7 +488,7 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
       const k = j * width + i;
       const u = left + ((i + 0.5) / width) * (right - left);
       const fade = fadeY * edgeFade(u);
-      const x = (u - 0.5) * 2 * COVER;
+      const x = (u - 0.5) * 2 * coverX;
 
       let reachable = 0;
       for (const state of states) reachable = Math.max(reachable, composition(state.masses, x * compose, y));
@@ -492,7 +529,9 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
         // Masses only set how much residue a region holds; they never draw an outline.
         // Edges come from the internal strata, so nothing reads as a bounded object.
         const mass = composition(state.masses, (x + edgeX * 0.16) * compose, y + edgeY * 0.07);
-        fields[s][k] = body * spec.rough + lerp(-0.45, 0.8, mass) + state.bias;
+        // Broad lobes of the threshold rise and fall separately in each alternate: parts of the field open, others fill.
+        const open = state.open && state.open * fbm(rx * 0.45 + 3.3 * s, ry * 0.45 - 5.9 * s, 2, cell / 0.45, limit);
+        fields[s][k] = body * spec.rough + lerp(-0.45, 0.8, mass) + state.bias + open;
         let amount = smoothstep(0.03, 0.6, mass) * fade * cut;
         if (amount <= 0.002 || fields[s][k] < -1.2) continue;
 
@@ -531,8 +570,8 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
       else {
         // Alpha holds the order in which parts of the field change: broad, irregular lobes, so a change advances
         // through the field rather than dissolving all of it at once.
-        const x = (left + ((i + 0.5) / width) * (right - left) - 0.5) * 2 * COVER * aspect + spec.depth * 3.1;
-        const y = (bottom + ((j + 0.5) / height) * (top - bottom) - 0.5) * 2 * COVER - spec.depth * 1.7;
+        const x = (left + ((i + 0.5) / width) * (right - left) - 0.5) * 2 * coverX * aspect + spec.depth * 3.1 + spec.grainOffset[0];
+        const y = (bottom + ((j + 0.5) / height) * (top - bottom) - 0.5) * 2 * COVER - spec.depth * 1.7 + spec.grainOffset[1];
         const order = 0.5 + 0.9 * (0.65 * noise(x * 1.4, y * 1.4) + 0.35 * noise(x * 2.9 + 7.3, y * 2.9 - 4.1));
         data[k * 4 + 3] = Math.round(clamp(order, 0, 1) * 255);
       }
@@ -623,9 +662,8 @@ if (renderer) {
     projectedAlign: NaN
   };
 
-  const layers = LAYERS.map((source, index) => {
-    const spec = { ...(source.kind === "veil" ? VEIL : STAIN), ...source };
-    const color = new Color(source.kind === "veil" ? TONE.field : TONE[source.tone]);
+  function createLayer(spec, index) {
+    const color = new Color(spec.kind === "veil" ? TONE.field : TONE[spec.tone]);
     // Atmospheric fade is applied per layer rather than by scene fog, so it can be compressed.
     const material = new MeshBasicMaterial({
       color,
@@ -641,7 +679,7 @@ if (renderer) {
     // An evolving field reads its map as one of its three stored states, or partway from one to another: each part of
     // the field changes when the transition reaches it in the stored order. Only this read of the map is replaced.
     let morph = null;
-    if (MORPH_LAYERS.includes(source.depth)) {
+    if (MORPH_LAYERS.includes(spec.depth)) {
       const uniforms = {
         stateFrom: { value: new Vector3(0, 1, 0) },
         stateTo: { value: new Vector3(0, 1, 0) },
@@ -657,7 +695,7 @@ if (renderer) {
             [
               "#ifdef USE_ALPHAMAP",
               "\tvec4 states = texture2D( alphaMap, vAlphaMapUv );",
-              "\tfloat reached = smoothstep( states.a - 0.3, states.a + 0.3, stateProgress * 1.6 - 0.3 );",
+              `\tfloat reached = smoothstep( states.a - ${MORPH.front.toFixed(3)}, states.a + ${MORPH.front.toFixed(3)}, stateProgress * ${(1 + 2 * MORPH.front).toFixed(3)} - ${MORPH.front.toFixed(3)} );`,
               "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
               "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );",
               "#endif"
@@ -683,13 +721,100 @@ if (renderer) {
       mesh,
       material,
       tone: color.getRGB({}, SRGBColorSpace),
-      haze: smoothstep(FOG_NEAR, FOG_FAR, source.depth),
+      haze: smoothstep(FOG_NEAR, FOG_FAR, spec.depth),
       appear: 0,
       seed: index * 2.39 + 0.7,
       driftRate: rand(0.8, 1.25),
-      morph
+      morph,
+      stream: null,
+      origin: 0,
+      placing: false,
+      deferred: false
     };
+  }
+
+  // A new tile for a stream: a few clusters of the layer's own scale, one after another along the tile with open field
+  // between them, often with a lesser part beside them that can separate or merge as it passes. Its material is another
+  // part of the same layer's material. Seeded by generation, so a stream never repeats itself.
+  function tileSpec(stream) {
+    stream.generation += 1;
+    const { base } = stream;
+    const random = mulberry32(Math.round(stream.depth * 1013) + stream.generation * 104729);
+    const [, anchorY, rx0, ry0, , angle0 = 0] = base.masses[0];
+    const span = Math.max(0.2, PASSAGE.length - 0.55 - 1.6 * rx0);
+    const most = rx0 > 0.3 ? Math.min(2, PASSAGE.clusters[1]) : PASSAGE.clusters[1];
+    const count = PASSAGE.clusters[0] + Math.floor(random() * (most - PASSAGE.clusters[0] + 1));
+    const masses = [];
+
+    for (let n = 0; n < count; n += 1) {
+      const x = -span + ((n + 0.2 + 0.6 * random()) / count) * 2 * span;
+      const y = lerp(anchorY, random() * 1.4 - 0.7, 0.6);
+      const size = lerp(0.7, 1.25, random());
+      const rx = rx0 * size * lerp(0.8, 1.2, random());
+      const ry = ry0 * size * lerp(0.8, 1.2, random());
+      const angle = angle0 + (random() * 2 - 1) * 0.5;
+      masses.push([x, y, rx, ry, lerp(0.75, 1, random()), angle]);
+      if (random() < 0.6) {
+        const side = random() < 0.5 ? -1 : 1;
+        masses.push([
+          x + side * rx * lerp(1, 1.8, random()),
+          y + (random() * 2 - 1) * ry * 1.2,
+          rx * lerp(0.35, 0.6, random()),
+          ry * lerp(0.35, 0.6, random()),
+          lerp(0.5, 0.8, random()),
+          angle + (random() * 2 - 1) * 0.6
+        ]);
+      }
+    }
+
+    return {
+      ...base,
+      masses,
+      cut: null,
+      cover: PASSAGE.length,
+      generation: stream.generation,
+      grainOffset: [random() * 200 - 100, random() * 200 - 100]
+    };
+  }
+
+  // The composed tile is turned with its passage; its masses and cut are turned back, so the field opens as composed.
+  function seatInTile(spec) {
+    const cos = Math.cos(PASSAGE.direction);
+    const sin = Math.sin(PASSAGE.direction);
+    const a = NOMINAL_ASPECT;
+
+    return {
+      ...spec,
+      cover: PASSAGE.length,
+      masses: spec.masses.map(([x, y, rx, ry, weight, angle = 0]) => [
+        x * cos + (y / a) * sin, y * cos - x * a * sin, rx, ry, weight, angle - PASSAGE.direction
+      ]),
+      cut: spec.cut && [spec.cut[0] * cos + spec.cut[1] * a * sin, spec.cut[1] * cos - (spec.cut[0] * sin) / a, spec.cut[2]]
+    };
+  }
+
+  const streams = [];
+  const layers = LAYERS.flatMap((source, index) => {
+    const base = { ...(source.kind === "veil" ? VEIL : STAIN), ...source, cover: COVER, grainOffset: [0, 0], generation: 0 };
+    if (!PASSAGE_LAYERS.includes(source.depth)) return [createLayer(base, index)];
+
+    // The first tile carries the field as composed, so the work opens on its composition; the next waits upstream.
+    const stream = { depth: source.depth, base, offset: 0, velocity: 0, generation: 0, tiles: [] };
+    for (let t = 0; t < 2; t += 1) {
+      const tile = createLayer(t === 0 ? seatInTile(base) : tileSpec(stream), index);
+      tile.stream = stream;
+      tile.origin = -2 * PASSAGE.length * t;
+      // The upstream tile is not in the frame for a while yet, so it is built last and does not hold up the volume.
+      tile.deferred = t > 0;
+      tile.mesh.rotation.z = PASSAGE.direction;
+      stream.tiles.push(tile);
+    }
+    streams.push(stream);
+    return stream.tiles;
   });
+  // Beyond this, in view half-widths along the passage, a tile's upstream end has left the frame with any parallax.
+  const PASSAGE_EXIT = 1.7;
+  let passageStrength = state.reducedMotion ? PASSAGE.reduced : 1;
   const evolving = layers.filter((layer) => layer.morph);
   // Channel of each stored state: composed (G), first alternate (R), second alternate (B).
   const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
@@ -744,7 +869,9 @@ if (renderer) {
 
   function queueTextures() {
     state.textureAspect = state.aspect;
-    state.buildQueue = layers.slice();
+    // Upstream tiles come last, nearest first, since nearer material arrives sooner.
+    const upstream = layers.filter((layer) => layer.deferred).sort((a, b) => a.spec.depth - b.spec.depth);
+    state.buildQueue = layers.filter((layer) => !layer.deferred).concat(upstream);
     state.buildJob = null;
   }
 
@@ -762,12 +889,17 @@ if (renderer) {
 
       state.buildQueue.shift();
       state.buildJob = null;
+      // A rebuilt passing tile joins the back of its stream only now, so an old map never enters the frame.
+      if (layer.placing) {
+        layer.placing = false;
+        layer.origin = Math.min(...layer.stream.tiles.filter((tile) => tile !== layer).map((tile) => tile.origin)) - 2 * PASSAGE.length;
+      }
       const previous = layer.material.alphaMap;
       layer.material.alphaMap = value;
       layer.material.needsUpdate = !previous;
       layer.mesh.visible = true;
       if (previous) previous.dispose();
-      if (!state.buildQueue.length) state.ready = true;
+      if (!state.buildQueue.some((queued) => !queued.deferred)) state.ready = true;
     }
   }
 
@@ -786,7 +918,7 @@ if (renderer) {
 
     for (let index = 0; index < layers.length; index += 1) {
       const depth = layers[index].spec.depth;
-      layers[index].mesh.scale.set(2 * HALF_TAN * depth * state.aspect * COVER, 2 * HALF_TAN * depth * COVER, 1);
+      layers[index].mesh.scale.set(2 * HALF_TAN * depth * state.aspect * layers[index].spec.cover, 2 * HALF_TAN * depth * COVER, 1);
     }
 
     if (!state.textureAspect || Math.abs(Math.log(state.aspect / state.textureAspect)) > Math.log(1.3)) {
@@ -897,16 +1029,27 @@ if (renderer) {
     return color.getRGB(tone, SRGBColorSpace).g;
   }
 
-  // Coverage of a layer's actual alpha map where the sight line from `from` through `point` crosses it.
-  function layerCoverage(layer, point, from) {
+  // Coverage of a layer's actual alpha map where the sight line from `from` through `point` crosses it, `ahead` seconds
+  // from now (a passing field will have moved on by then).
+  function layerCoverage(layer, point, from, ahead = 0) {
     const map = layer.material.alphaMap;
-    if (!layer.mesh.visible || !map) return 0;
+    if (!layer.mesh.visible || !map || layer.placing) return 0;
 
     const depth = layer.spec.depth;
     const reach = (-depth - from.z) / (point.z - from.z);
     const scale = alignOffset(depth, layerCentre.set(0, 0, -depth), from);
-    const planeU = 0.5 + (from.x + (point.x - from.x) * reach - layerCentre.x) / (2 * HALF_TAN * depth * state.aspect * COVER * scale);
-    const planeV = 0.5 + (from.y + (point.y - from.y) * reach - layerCentre.y) / (2 * HALF_TAN * depth * COVER * scale);
+    let hitX = from.x + (point.x - from.x) * reach - layerCentre.x;
+    let hitY = from.y + (point.y - from.y) * reach - layerCentre.y;
+    if (layer.stream) {
+      const cos = Math.cos(PASSAGE.direction);
+      const sin = Math.sin(PASSAGE.direction);
+      const along = (layer.origin + layer.stream.offset + layer.stream.velocity * ahead) * HALF_TAN * depth * state.aspect * scale;
+      hitX -= along * cos;
+      hitY -= along * sin;
+      [hitX, hitY] = [hitX * cos + hitY * sin, hitY * cos - hitX * sin];
+    }
+    const planeU = 0.5 + hitX / (2 * HALF_TAN * depth * state.aspect * layer.spec.cover * scale);
+    const planeV = 0.5 + hitY / (2 * HALF_TAN * depth * COVER * scale);
     const u = planeU * map.repeat.x + map.offset.x;
     const v = planeV * map.repeat.y + map.offset.y;
     if (u <= 0 || u >= 1 || v <= 0 || v >= 1) return 0;
@@ -934,6 +1077,7 @@ if (renderer) {
     let surround = 0;
     let ring = 0;
     let scale = 1;
+    let ahead = 0;
 
     function sightLine(dx, dy) {
       probe.set(anchor.x + dx * scale, anchor.y + dy * scale, anchor.z);
@@ -943,7 +1087,7 @@ if (renderer) {
       let clear = 1;
 
       for (let index = 0; index < layers.length; index += 1) {
-        const cover = layerCoverage(layers[index], probe, eye);
+        const cover = layerCoverage(layers[index], probe, eye, ahead);
         full = lerp(full, levels[index], cover);
         if (layers[index].spec.depth > depth) background = full;
         else {
@@ -956,6 +1100,7 @@ if (renderer) {
     }
 
     for (let t = 0; t < times.length; t += 1) {
+      ahead = times[t];
       cameraPosition(state.time + times[t] * (state.reducedMotion ? 0.5 : 1), eye);
       scale = alignOffset(depth, sentenceBase(fx, fy, depth, anchor), eye);
 
@@ -1232,6 +1377,30 @@ if (renderer) {
     }
   }
 
+  // Passing fields keep going through every phase. Nearer material passes faster; as depth flattens every field takes
+  // one slow shared speed, so the passage cannot reopen depth. A tile whose upstream end has left the frame is rebuilt
+  // with new masses and placed at the back of its stream once its map is ready.
+  function updatePassage(dt) {
+    passageStrength = lerp(passageStrength, state.reducedMotion ? PASSAGE.reduced : 1, 1 - Math.exp(-dt / 5));
+    const align = state.params.align;
+    const t = state.time;
+    const sway = 1 + PASSAGE.sway * (0.6 * Math.sin((t * TAU) / 181 + 2.3) + 0.4 * Math.sin((t * TAU) / 277 + 0.8));
+
+    for (const stream of streams) {
+      stream.velocity = PASSAGE.speed * passageStrength * sway * lerp(FIXATION_DEPTH / stream.depth, PASSAGE.flat, align);
+      stream.offset += stream.velocity * dt;
+
+      for (const tile of stream.tiles) {
+        if (tile.placing || tile.origin + stream.offset - PASSAGE.length < PASSAGE_EXIT) continue;
+        tile.spec = tileSpec(stream);
+        if (tile.morph) tile.morph.states = residueStates(tile.spec, MORPH.amount);
+        tile.placing = true;
+        if (state.buildQueue[0] === tile) state.buildJob = null;
+        if (!state.buildQueue.includes(tile)) state.buildQueue.push(tile);
+      }
+    }
+  }
+
   function updateLayers(dt) {
     const drift = state.params.drift * (state.reducedMotion ? 0.25 : 1);
     const t = state.time;
@@ -1252,7 +1421,13 @@ if (renderer) {
       );
 
       const scale = alignOffset(depth, position) * (1 + drift * 0.015 * Math.sin((t * TAU * rate) / 71 + layer.seed * 0.6));
-      const coverX = 2 * HALF_TAN * depth * state.aspect * COVER;
+      if (layer.stream) {
+        // Carried along the passage in the layer's own view scale, so flattening still holds it on the shared plane.
+        const along = (layer.origin + layer.stream.offset) * HALF_TAN * depth * state.aspect * scale;
+        position.x += along * Math.cos(PASSAGE.direction);
+        position.y += along * Math.sin(PASSAGE.direction);
+      }
+      const coverX = 2 * HALF_TAN * depth * state.aspect * layer.spec.cover;
       const coverY = 2 * HALF_TAN * depth * COVER;
       layer.mesh.scale.set(coverX * scale, coverY * scale, 1);
 
@@ -1304,6 +1479,7 @@ if (renderer) {
     updateSpatialFrame(dt);
     projectSpatialFrame();
     updateMorph(dt);
+    updatePassage(dt);
     updateLayers(dt);
     updateText(dt);
   }
@@ -1321,7 +1497,11 @@ if (renderer) {
     if (elapsed < interval - 2) return;
 
     state.lastFrame = now;
-    if (state.buildQueue.length) buildTextures(TEXTURE_BUDGET_MS);
+    // Once every field has a map, rebuilding a passing tile takes a smaller share of each frame.
+    if (state.buildQueue.length) {
+      const settled = state.ready && state.buildQueue.every((layer) => layer.material.alphaMap);
+      buildTextures(settled ? TEXTURE_BUDGET_MS / 2 : TEXTURE_BUDGET_MS);
+    }
     step(Math.min(elapsed, 100) / 1000);
     renderer.render(scene, camera);
   }
