@@ -93,6 +93,28 @@ const ANCHOR = {
 };
 // By depth: the far veil, the graphite at fixation, the ink, and the two veils that cut across them.
 const ANCHOR_LAYERS = [10.3, 9, 8, 7, 4.3];
+// Aura drift: the anchored fields are not fixed either. Each strays very slowly from its composed place on its own:
+// mostly along the passage axis, sometimes with it and sometimes against it, never in step with another field or with
+// the passage, so it reads as material lagging behind the sky rather than as a second, slower current. reach is how far,
+// in view half-heights, a field strays at most; cross is the share of that across the passage axis; periods are in
+// seconds and share no common beat. While depth is flat the drift slows to flat of its pace.
+const AURA = {
+  reach: 0.11,
+  cross: 0.45,
+  periods: [[260, 420], [430, 700], [150, 240]],
+  flat: 0.3
+};
+// Edge language shared by all residue, so no field reads as a painted stroke laid over the others: a contour may hold
+// for a stretch, then dissolve. feather widens the outer threshold of the crisper fields where their masses thin out,
+// by an amount that wanders along the contour between firm (a share of it) and full, so a thin outer mass reads as
+// wash rather than a flat stamped shape; their interiors and grain stay as they are. A cut's softness ranges
+// over cut and wanders along its length, and its line meanders by waver, so it no longer reads as a mask.
+const EDGE = {
+  feather: 3,
+  firm: 0.35,
+  cut: [0.035, 0.12],
+  waver: 0.06
+};
 // Passage: some fields are not held in place but carried slowly across the frame, all in one oblique direction, while
 // the others stay where they are, like a disturbance held on the retina while the field beyond it goes by. Each passing
 // field moves at its own depth, nearer material faster, so passage is itself a depth cue. The passage is never steady:
@@ -521,6 +543,8 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
   const cell = 540 / freq;
   const character = residueCharacter(spec);
   const edge = spec.edge + focusBlur * 0.16;
+  // Fields generated crisp (near the fixation depth) take the most feathering at their outer edge.
+  const crisp = smoothstep(2.4, 1.6, blur);
   const cosA = Math.cos(spec.tilt);
   const sinA = Math.sin(spec.tilt);
   // Each passing tile reads its own part of the layer's material.
@@ -554,6 +578,7 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
   const height = Math.max(8, Math.ceil((top - bottom) * planeRows));
   const fields = states.map(() => new Float32Array(width * height).fill(-4));
   const rests = states.map(() => new Float32Array(width * height));
+  const feathers = states.map(() => new Float32Array(width * height).fill(1));
   const edges = new Float32Array(width * height);
 
   for (let j = 0; j < height; j += 1) {
@@ -586,11 +611,15 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
       // Edge quality wanders: pressed charcoal in places, feathered wash in others.
       edges[k] = edge * lerp(0.2, 1.8, smoothstep(-0.45, 0.45, fbm(rx * 0.55 + 9.1, ry * 0.55 - 4.3, 2, cell / 0.55, limit)));
 
+      // How far this part of a contour dissolves: broad, so a contour holds along one stretch and loosens along another.
+      const loosen = smoothstep(-0.45, 0.45, fbm(rx * 0.35 - 2.7, ry * 0.35 + 6.1, 2, cell / 0.35, limit));
+
       let cut = 1;
       if (spec.cut) {
         const [nx, ny, offset] = spec.cut;
-        const along = nx * x + ny * y - offset + warpY * 0.07 + warpX * 0.03;
-        const soft = 0.02 + focusBlur * 0.04 + 0.03 * smoothstep(-0.3, 0.5, warpX);
+        const meander = fbm(rx * 0.25 + 5.3, ry * 0.25 - 1.9, 2, cell / 0.25, limit);
+        const along = nx * x + ny * y - offset + warpY * 0.07 + warpX * 0.03 + EDGE.waver * meander;
+        const soft = lerp(EDGE.cut[0], EDGE.cut[1], loosen) + focusBlur * 0.04 + 0.03 * smoothstep(-0.3, 0.5, warpX);
         cut = smoothstep(-soft, soft, along);
       }
 
@@ -609,6 +638,8 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
         // Broad lobes of the threshold rise and fall separately in each alternate: parts of the field open, others fill.
         const open = state.open && state.open * fbm(rx * 0.45 + 3.3 * s, ry * 0.45 - 5.9 * s, 2, cell / 0.45, limit);
         fields[s][k] = body * spec.rough + lerp(-0.45, 0.8, mass) + state.bias + open;
+        // Only where the field thins toward its outside; its interior keeps the edges of its own strata.
+        feathers[s][k] = 1 + EDGE.feather * crisp * lerp(EDGE.firm, 1, loosen) * (1 - smoothstep(0.2, 0.7, mass));
         let amount = smoothstep(0.03, 0.6, mass) * fade * cut;
         if (amount <= 0.002 || fields[s][k] < -1.2) continue;
 
@@ -664,7 +695,7 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
         const west = i > 0 && field[k - 1] > -4 ? field[k - 1] : f;
         const north = j + 1 < height && field[k + width] > -4 ? field[k + width] : f;
         const south = j > 0 && field[k - width] > -4 ? field[k - width] : f;
-        const soft = Math.max(edges[k], spread * Math.hypot(east - west, north - south) * 0.5);
+        const soft = Math.max(edges[k], spread * Math.hypot(east - west, north - south) * 0.5) * feathers[s][k];
         const value = Math.round(clamp(smoothstep(-soft, soft, f) * rest[k], 0, 1) * 255);
         for (const channel of channels[s]) data[k * 4 + channel] = value;
       }
@@ -863,6 +894,30 @@ if (renderer) {
       };
     }
 
+    // Each anchored field wanders on its own axis, near the passage direction, with its own sense and beats.
+    let aura = null;
+    if (ANCHOR_LAYERS.includes(spec.depth)) {
+      const channel = () => {
+        const weights = [rand(0.45, 0.6), rand(0.25, 0.35), rand(0.1, 0.2)];
+        const total = weights[0] + weights[1] + weights[2];
+        return {
+          rates: AURA.periods.map(([low, high]) => TAU / rand(low, high)),
+          phases: AURA.periods.map(() => rand(0, TAU)),
+          weights: weights.map((weight) => weight / total)
+        };
+      };
+      const heading = PASSAGE.direction + rand(-0.5, 0.5) + (Math.random() < 0.5 ? Math.PI : 0);
+      aura = {
+        reach: AURA.reach * rand(0.7, 1),
+        cos: Math.cos(heading),
+        sin: Math.sin(heading),
+        along: channel(),
+        across: channel(),
+        x: 0,
+        y: 0
+      };
+    }
+
     return {
       spec,
       mesh,
@@ -873,6 +928,7 @@ if (renderer) {
       seed: index * 2.39 + 0.7,
       driftRate: rand(0.8, 1.25),
       morph,
+      aura,
       stream: null,
       origin: 0,
       placing: false,
@@ -972,6 +1028,7 @@ if (renderer) {
   let passageStrength = state.reducedMotion ? PASSAGE.reduced : 1;
   const evolving = layers.filter((layer) => layer.morph && !layer.morph.anchored);
   const unsettled = layers.filter((layer) => layer.morph && layer.morph.anchored);
+  let auraTime = rand(0, 600);
   // Channel of each stored state: composed (G), first alternate (R), second alternate (B).
   const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
   let morphStrength = state.reducedMotion ? MORPH.reduced : 1;
@@ -1195,8 +1252,8 @@ if (renderer) {
     const depth = layer.spec.depth;
     const reach = (-depth - from.z) / (point.z - from.z);
     const scale = alignOffset(depth, layerCentre.set(0, 0, -depth), from);
-    let hitX = from.x + (point.x - from.x) * reach - layerCentre.x;
-    let hitY = from.y + (point.y - from.y) * reach - layerCentre.y;
+    let hitX = from.x + (point.x - from.x) * reach - layerCentre.x - (layer.aura ? layer.aura.x : 0);
+    let hitY = from.y + (point.y - from.y) * reach - layerCentre.y - (layer.aura ? layer.aura.y : 0);
     if (layer.stream) {
       const cos = Math.cos(PASSAGE.direction);
       const sin = Math.sin(PASSAGE.direction);
@@ -1579,9 +1636,16 @@ if (renderer) {
     }
   }
 
+  function wander(channel, t) {
+    let sum = 0;
+    for (let k = 0; k < channel.rates.length; k += 1) sum += channel.weights[k] * Math.sin(t * channel.rates[k] + channel.phases[k]);
+    return sum;
+  }
+
   function updateLayers(dt) {
     const drift = state.params.drift * (state.reducedMotion ? 0.25 : 1);
     const t = state.time;
+    auraTime += dt * (state.reducedMotion ? 0.5 : 1) * lerp(1, AURA.flat, smoothstep(0.5, 0.9, state.params.align));
 
     for (let index = 0; index < layers.length; index += 1) {
       const layer = layers[index];
@@ -1604,6 +1668,17 @@ if (renderer) {
         const along = (layer.origin + layer.stream.offset) * HALF_TAN * depth * state.aspect * scale;
         position.x += along * Math.cos(PASSAGE.direction);
         position.y += along * Math.sin(PASSAGE.direction);
+      }
+      if (layer.aura) {
+        // In the layer's own view scale, so a stray reads the same size at every depth and flattening still holds.
+        const { aura } = layer;
+        const unit = aura.reach * HALF_TAN * depth * scale;
+        const along = unit * wander(aura.along, auraTime);
+        const across = unit * AURA.cross * wander(aura.across, auraTime);
+        aura.x = along * aura.cos - across * aura.sin;
+        aura.y = along * aura.sin + across * aura.cos;
+        position.x += aura.x;
+        position.y += aura.y;
       }
       const coverX = 2 * HALF_TAN * depth * state.aspect * layer.spec.cover;
       const coverY = 2 * HALF_TAN * depth * COVER;
