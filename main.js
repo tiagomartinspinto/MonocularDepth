@@ -63,8 +63,33 @@ const MORPH = {
   concurrent: 2,
   reduced: 0.4
 };
-// By depth: the near streaked mass, the lower-right soft mass, the ink, and the far upper-right cluster.
-const MORPH_LAYERS = [5, 6, 8, 17.5];
+// By depth: the near streaked mass, the lower-right soft mass, and the far upper-right cluster.
+const MORPH_LAYERS = [5, 6, 17.5];
+// Anchored instability: the fields that do not pass stay where they are but are not frozen. They hold three states like
+// evolving residue, drawn and read differently. Their masses barely move or resize, since position is the one thing
+// that holds; instead their edges are drawn from distant noise, density moves between and within masses, and broad
+// lobes of the threshold open and fill with no change to the field's overall strength, so nothing swells or breathes.
+// The order in which parts change is finer (order), so a change is scattered rather than advancing through the field.
+// And they do not step from state to state: each wanders, partway toward another state, all the way, or back, resting
+// between moves for irregular lengths, so openings form and close without a direction. Times are in seconds.
+const ANCHOR = {
+  amount: 1,
+  shift: 0.05,
+  swell: 0.08,
+  turn: 0.12,
+  reweigh: 0.12,
+  edge: 1.5,
+  density: 1.8,
+  bias: 0,
+  open: 0.32,
+  front: 0.2,
+  order: 1.8,
+  wander: [9, 24],
+  rest: [2, 12],
+  concurrent: 3
+};
+// By depth: the far veil, the graphite at fixation, the ink, and the two veils that cut across them.
+const ANCHOR_LAYERS = [10.3, 9, 8, 7, 4.3];
 // Passage: some fields are not held in place but carried slowly across the frame, all in one oblique direction, while
 // the others stay where they are, like a disturbance held on the retina while the field beyond it goes by. Each passing
 // field moves at its own depth, nearer material faster, so passage is itself a depth cue. The passage is never steady:
@@ -398,7 +423,7 @@ function residueBlur(spec) {
 // Alternate states of one field share its material body. Only what a field holds changes: its masses move a little,
 // grow or shrink and reweigh, its edge irregularity and internal density are drawn from nearby noise, and its threshold
 // shifts slightly. Seeded by depth, so the alternates are the same on every load; a passing tile's by its generation too.
-function residueStates(spec, amount) {
+function residueStates(spec, amount, character = MORPH) {
   const random = mulberry32(Math.round(spec.depth * 131) + 7 + spec.generation * 7919);
   const signed = () => random() * 2 - 1;
   const states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }];
@@ -406,17 +431,17 @@ function residueStates(spec, amount) {
   for (let index = 0; index < 2; index += 1) {
     states.push({
       masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0]) => [
-        mx + amount * MORPH.shift * rx * signed(),
-        my + amount * MORPH.shift * ry * signed(),
-        rx * (1 + amount * MORPH.swell * signed()),
-        ry * (1 + amount * MORPH.swell * signed()),
-        weight * (1 + amount * MORPH.reweigh * signed()),
-        angle + amount * MORPH.turn * signed()
+        mx + amount * character.shift * rx * signed(),
+        my + amount * character.shift * ry * signed(),
+        rx * (1 + amount * character.swell * signed()),
+        ry * (1 + amount * character.swell * signed()),
+        weight * (1 + amount * character.reweigh * signed()),
+        angle + amount * character.turn * signed()
       ]),
-      warp: [amount * MORPH.edge * signed(), amount * MORPH.edge * signed()],
-      density: [amount * MORPH.density * signed(), amount * MORPH.density * signed()],
-      bias: amount * MORPH.bias * signed(),
-      open: amount * MORPH.open
+      warp: [amount * character.edge * signed(), amount * character.edge * signed()],
+      density: [amount * character.density * signed(), amount * character.density * signed()],
+      bias: amount * character.bias * signed(),
+      open: amount * character.open
     });
   }
 
@@ -572,7 +597,8 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
         // through the field rather than dissolving all of it at once.
         const x = (left + ((i + 0.5) / width) * (right - left) - 0.5) * 2 * coverX * aspect + spec.depth * 3.1 + spec.grainOffset[0];
         const y = (bottom + ((j + 0.5) / height) * (top - bottom) - 0.5) * 2 * COVER - spec.depth * 1.7 + spec.grainOffset[1];
-        const order = 0.5 + 0.9 * (0.65 * noise(x * 1.4, y * 1.4) + 0.35 * noise(x * 2.9 + 7.3, y * 2.9 - 4.1));
+        const scatter = spec.order;
+        const order = 0.5 + 0.9 * (0.65 * noise(x * 1.4 * scatter, y * 1.4 * scatter) + 0.35 * noise(x * 2.9 * scatter + 7.3, y * 2.9 * scatter - 4.1));
         data[k * 4 + 3] = Math.round(clamp(order, 0, 1) * 255);
       }
 
@@ -592,6 +618,17 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
       }
     }
     yield;
+  }
+
+  // An anchored field's alternates keep the composed state's overall strength: material moves within the field rather
+  // than appearing or vanishing, so a change never reads as the field swelling or breathing.
+  if (spec.balance && states.length === 3) {
+    const sums = [0, 0, 0];
+    for (let k = 0; k < width * height; k += 1) for (let c = 0; c < 3; c += 1) sums[c] += data[k * 4 + c];
+    for (const c of [0, 2]) {
+      const ratio = sums[c] > 0 ? clamp(sums[1] / sums[c], 0.7, 1.4) : 1;
+      for (let k = 0; k < width * height; k += 1) data[k * 4 + c] = Math.min(255, Math.round(data[k * 4 + c] * ratio));
+    }
   }
 
   const texture = new DataTexture(data, width, height, RGBAFormat);
@@ -678,8 +715,12 @@ if (renderer) {
 
     // An evolving field reads its map as one of its three stored states, or partway from one to another: each part of
     // the field changes when the transition reaches it in the stored order. Only this read of the map is replaced.
+    // Anchored fields use their own character and order; see updateAnchored for how they are read.
     let morph = null;
-    if (MORPH_LAYERS.includes(spec.depth)) {
+    const anchored = ANCHOR_LAYERS.includes(spec.depth);
+    if (anchored || MORPH_LAYERS.includes(spec.depth)) {
+      const character = anchored ? ANCHOR : MORPH;
+      const front = character.front.toFixed(3);
       const uniforms = {
         stateFrom: { value: new Vector3(0, 1, 0) },
         stateTo: { value: new Vector3(0, 1, 0) },
@@ -695,24 +736,28 @@ if (renderer) {
             [
               "#ifdef USE_ALPHAMAP",
               "\tvec4 states = texture2D( alphaMap, vAlphaMapUv );",
-              `\tfloat reached = smoothstep( states.a - ${MORPH.front.toFixed(3)}, states.a + ${MORPH.front.toFixed(3)}, stateProgress * ${(1 + 2 * MORPH.front).toFixed(3)} - ${MORPH.front.toFixed(3)} );`,
+              `\tfloat reached = smoothstep( states.a - ${front}, states.a + ${front}, stateProgress * ${(1 + 2 * character.front).toFixed(3)} - ${front} );`,
               "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
               "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );",
               "#endif"
             ].join("\n")
           );
       };
-      material.customProgramCacheKey = () => "residue-states";
+      material.customProgramCacheKey = () => "residue-states-" + front;
       morph = {
-        states: residueStates(spec, MORPH.amount),
+        states: residueStates(spec, character.amount, character),
         uniforms,
+        anchored,
         state: 0,
         next: 0,
         moving: false,
         elapsed: 0,
         duration: 0,
+        progress: 0,
+        from: 0,
+        target: 0,
         // Staggered, so the fields never begin together.
-        wait: rand(4, 28)
+        wait: anchored ? rand(2, 14) : rand(4, 28)
       };
     }
 
@@ -795,7 +840,15 @@ if (renderer) {
 
   const streams = [];
   const layers = LAYERS.flatMap((source, index) => {
-    const base = { ...(source.kind === "veil" ? VEIL : STAIN), ...source, cover: COVER, grainOffset: [0, 0], generation: 0 };
+    const base = {
+      ...(source.kind === "veil" ? VEIL : STAIN),
+      ...source,
+      cover: COVER,
+      grainOffset: [0, 0],
+      generation: 0,
+      order: ANCHOR_LAYERS.includes(source.depth) ? ANCHOR.order : 1,
+      balance: ANCHOR_LAYERS.includes(source.depth)
+    };
     if (!PASSAGE_LAYERS.includes(source.depth)) return [createLayer(base, index)];
 
     // The first tile carries the field as composed, so the work opens on its composition; the next waits upstream.
@@ -815,7 +868,8 @@ if (renderer) {
   // Beyond this, in view half-widths along the passage, a tile's upstream end has left the frame with any parallax.
   const PASSAGE_EXIT = 1.7;
   let passageStrength = state.reducedMotion ? PASSAGE.reduced : 1;
-  const evolving = layers.filter((layer) => layer.morph);
+  const evolving = layers.filter((layer) => layer.morph && !layer.morph.anchored);
+  const unsettled = layers.filter((layer) => layer.morph && layer.morph.anchored);
   // Channel of each stored state: composed (G), first alternate (R), second alternate (B).
   const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
   let morphStrength = state.reducedMotion ? MORPH.reduced : 1;
@@ -1377,6 +1431,56 @@ if (renderer) {
     }
   }
 
+  // Anchored fields wander between their states rather than stepping. Each move goes partway toward another state, all
+  // the way, or back toward where it was, over a loose duration, then rests; a completed change becomes the new resting
+  // state, and from rest any other state can be sought, so the field never settles into a round. A few may move at once.
+  // They keep moving while depth flattens and through recalibration: this disturbance belongs to seeing, not to space.
+  function updateAnchored(dt) {
+    const clock = dt * (state.reducedMotion ? 0.7 : 1);
+    let moving = 0;
+    for (const layer of unsettled) if (layer.morph.moving) moving += 1;
+
+    for (const layer of unsettled) {
+      const morph = layer.morph;
+      const { uniforms } = morph;
+      morph.elapsed += clock;
+
+      if (!morph.moving) {
+        if (morph.elapsed >= morph.wait && (moving >= ANCHOR.concurrent || !state.ready)) morph.wait = morph.elapsed + rand(2, 5);
+        else if (morph.elapsed >= morph.wait) {
+          if (morph.progress >= 1) {
+            morph.state = morph.next;
+            morph.progress = 0;
+            uniforms.stateFrom.value.fromArray(STATE_CHANNELS[morph.state]);
+          }
+          if (morph.progress <= 0) {
+            morph.next = (morph.state + (Math.random() < 0.5 ? 1 : 2)) % 3;
+            uniforms.stateTo.value.fromArray(STATE_CHANNELS[morph.next]);
+          }
+          const roll = Math.random();
+          morph.from = morph.progress;
+          morph.target = morph.progress > 0.2 && roll < 0.3 ? rand(0, morph.progress * 0.5) : roll < 0.65 ? 1 : rand(0.3, 0.85);
+          morph.duration = rand(...ANCHOR.wander) * lerp(0.5, 1, Math.abs(morph.target - morph.from));
+          morph.elapsed = 0;
+          morph.moving = true;
+          moving += 1;
+        }
+      } else {
+        const u = Math.min(1, morph.elapsed / morph.duration);
+        morph.progress = lerp(morph.from, morph.target, smoothstep(0, 1, u));
+        if (u >= 1) {
+          morph.moving = false;
+          morph.elapsed = 0;
+          morph.wait = rand(...ANCHOR.rest);
+          moving -= 1;
+        }
+      }
+
+      uniforms.stateProgress.value = morph.progress;
+      uniforms.stateAmount.value = morphStrength;
+    }
+  }
+
   // Passing fields keep going through every phase. Nearer material passes faster; as depth flattens every field takes
   // one slow shared speed, so the passage cannot reopen depth. A tile whose upstream end has left the frame is rebuilt
   // with new masses and placed at the back of its stream once its map is ready.
@@ -1479,6 +1583,7 @@ if (renderer) {
     updateSpatialFrame(dt);
     projectSpatialFrame();
     updateMorph(dt);
+    updateAnchored(dt);
     updatePassage(dt);
     updateLayers(dt);
     updateText(dt);

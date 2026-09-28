@@ -11,6 +11,9 @@ Branch: `passing-clouds-test` (not merged, not pushed), from `main` at `exhibiti
 - Evolving residue states depart further from the composed state (stronger in-place reshaping, edge and density redistribution, and a broad uneven threshold so openings form in one part of a field while another closes). Centre displacement is unchanged, so anchored fields do not travel.
 - Text placement predicts where passing fields will be while a sentence is present. Text corpus, timing, flattening, recalibration, palette, haze, occlusion, and reduced-motion handling are otherwise unchanged; reduced motion slows the passage to 30%.
 - Upstream tiles are built after the volume has assembled, nearest first, so start-up time is unchanged.
+- Anchored fields (the far veil, the graphite at fixation, the ink, and the two veils that cut across them) are positionally anchored but no longer frozen: morphology without passage. Their alternate states barely move or resize masses; edges, internal density and broad threshold lobes change instead, and each alternate keeps the composed state's overall strength, so nothing swells or breathes. Their change order is finer, so a change is scattered rather than sweeping.
+- Anchored fields do not step between states: each wanders partway toward another state, all the way, or back, then rests for an irregular time; at most three move at once, and they keep changing through flattening and recalibration. Over 30 seconds roughly a quarter to half of a field's material redistributes, while its centroid stays within about 3% of the field's width.
+- Passing fields are unchanged: identical tile maps, speeds, direction, sway and flat-phase stall.
 
 ## Three.js Depth-Volume Experiment
 
