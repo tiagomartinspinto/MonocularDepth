@@ -218,6 +218,14 @@ const TEXT_CANVAS_HEIGHT = 128;
 const TEXT_FONT_PX = 64;
 const TEXT_FONT_FAMILY = 'ui-serif, Georgia, "Times New Roman", serif';
 const TEXT_MAX_OPACITY = 0.8;
+// The silence after a fragment has faded, in seconds to the next one: sometimes a long absence in which text can be
+// forgotten, usually a moderate pause, and now and then a second thought soon after the first. A quick return is never
+// followed by another. Timing never looks at the image.
+const TEXT_GAPS = {
+  long: { chance: 0.35, range: [120, 240] },
+  normal: { chance: 0.5, range: [45, 90] },
+  short: { chance: 0.15, range: [5, 18] }
+};
 // A sentence sits between existing layers, never on one: from just behind the nearest residue to just past the far veil.
 const TEXT_DEPTHS = [5.5, 6.5, 7.5, 8.5, 9.6, 11];
 // Regions are starting zones only; each is widened so a sentence can lean into residue or a veil instead of waiting in open space.
@@ -239,12 +247,10 @@ const FRAGMENTS = [
   "no / the other one",
   "hm",
   "still there",
-  "I thought it was still there",
   "closer",
   "same place / maybe",
   "a moment ago",
   "that part",
-  "it moved / no",
   "further back",
   "wait",
   "was that part there before",
@@ -252,20 +258,16 @@ const FRAGMENTS = [
   "not that edge",
   "just beside it",
   "no",
-  "there / then gone",
   "can still find this part",
   "before it moved",
   "still",
   "inside / no",
   "that bit left",
-  "mm",
   "here / a little lower",
   "there",
   "it moved / or I did",
   "after that",
-  "not there",
-  "still / wait",
-  "wait / which part was it"
+  "not there"
 ];
 
 function clamp(value, min, max) {
@@ -1061,6 +1063,7 @@ if (renderer) {
     stage: "wait",
     elapsed: 0,
     wait: rand(26, 40),
+    quick: false,
     fadeIn: 0,
     hold: 0,
     fadeOut: 0,
@@ -1375,7 +1378,7 @@ if (renderer) {
   }
 
   function beginSentence() {
-    // A fragment cannot return until most of the others have been shown, about twenty minutes at the usual intervals.
+    // A fragment cannot return until most of the others have been shown, about half an hour at the usual intervals.
     const fragment = pick(FRAGMENTS.filter((line) => !text.said.includes(line)));
     text.said = [fragment, ...text.said].slice(0, FRAGMENTS.length - 10);
     drawSentence(fragment);
@@ -1424,7 +1427,11 @@ if (renderer) {
     if (text.elapsed >= text.fadeOut) {
       text.stage = "wait";
       text.elapsed = 0;
-      text.wait = Math.random() < 0.2 ? rand(55, 80) : rand(28, 50);
+      const { long, normal, short } = TEXT_GAPS;
+      // After a quick return, only a long or a moderate silence.
+      const roll = Math.random() * (text.quick ? long.chance + normal.chance : long.chance + normal.chance + short.chance);
+      text.quick = roll >= long.chance + normal.chance;
+      text.wait = rand(...(roll < long.chance ? long.range : text.quick ? short.range : normal.range));
       textMesh.visible = false;
       return 0;
     }
