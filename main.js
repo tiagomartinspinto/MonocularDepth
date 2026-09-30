@@ -240,15 +240,16 @@ const TEXT_REGIONS = [
   [-0.2, 0.25, 0.56, 0.7]
 ];
 
-// Authored whole, never assembled: perceptual checks, corrections and hesitations completed by the moving image.
+// Authored whole, never assembled: perceptual checks, corrections and sounds held before words, completed by the moving
+// image. A sound's written length is its duration.
 // Loose families give the thought a weak memory of itself. They are never shown and imply no order.
 const FRAGMENTS = {
   finding: ["there", "again", "found it", "behind that", "just beside it"],
   remembering: ["a moment ago", "was that part there before", "before it moved", "it was darker", "I thought this was closer"],
   holding: ["still", "wait", "can still find this part", "not gone"],
-  correcting: ["no", "not that edge", "no / the other one", "here / a little lower", "same place / maybe", "it moved / or I did"],
-  losing: ["that bit left", "not there", "there was more here", "I had it / just now"],
-  hesitation: ["hm", "ah"]
+  correcting: ["no", "not that edge", "the other one", "a little lower", "same place maybe", "it moved or I did"],
+  losing: ["that bit left", "not there", "there was more here", "I had it just now"],
+  hesitation: ["ahhhhhhhhh", "mmmmmmmmmmmm"]
 };
 // Where a returning thought may drift after a moderate pause: its own family or one beside it.
 const FAMILY_NEIGHBOURS = {
