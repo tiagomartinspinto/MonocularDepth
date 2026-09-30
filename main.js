@@ -264,6 +264,225 @@ const FAMILY_NEIGHBOURS = {
 const TEXT_MEMORY = { normal: 0.3, short: 0.75 };
 const FRAGMENT_LINES = Object.values(FRAGMENTS).flat();
 const FRAGMENT_FAMILY = new Map(Object.entries(FRAGMENTS).flatMap(([family, lines]) => lines.map((line) => [line, family])));
+// What a chosen thought then does, weighted among what the fragment and recent memory allow. Most are simply there and
+// gone; others are overtaken by a correction before they have left, stop short, leave a word or two behind, or come back
+// later as a piece of themselves or slightly wrong. None of it reads the image.
+const THOUGHT_BEHAVIOURS = { whole: 0.6, corrected: 0.12, interrupted: 0.15, residue: 0.07, echo: 0.05, altered: 0.07 };
+// A sound is held rather than shown: its length grows, lets go, swells and settles, or breaks off before it is full.
+const SOUND_BEHAVIOURS = { grow: 0.35, release: 0.35, swell: 0.15, broken: 0.15 };
+// Words too slight to be all that stays behind, and words a returning thought would not end on.
+const SLIGHT_WORDS = new Set(["it", "that", "the", "a", "or", "I", "one", "was", "this"]);
+const OPEN_WORDS = new Set(["a", "the", "or", "was", "this", "just", "can", "I"]);
+// Fragments recently recalled, which cannot be recalled again, so no piece keeps coming back.
+const RECALL_MEMORY = 6;
+
+// A fragment cannot return until most of the others have been shown, about half an hour at the usual intervals. The
+// choice knows only the last fragment's family and the silence since it, never the image.
+function chooseFragment(mind, gap) {
+  const previous = mind.family;
+  const unsaid = (families) => families.flatMap((family) => FRAGMENTS[family]).filter((line) => !mind.said.includes(line));
+  let related = null;
+  if (previous && previous !== "hesitation") {
+    if (gap === "short" && Math.random() < TEXT_MEMORY.short) related = [...new Set([previous, "correcting"])];
+    else if (gap === "normal" && Math.random() < TEXT_MEMORY.normal) related = [previous, ...FAMILY_NEIGHBOURS[previous]];
+  }
+  const near = related ? unsaid(related) : [];
+  if (near.length) return pick(near);
+  return pick(unsaid(Object.keys(FRAGMENTS).filter((family) => !(previous === "hesitation" && family === "hesitation"))));
+}
+
+function remember(mind, fragment) {
+  mind.said = [fragment, ...mind.said].slice(0, FRAGMENT_LINES.length - 10);
+  mind.family = FRAGMENT_FAMILY.get(fragment);
+}
+
+function words(line) {
+  return [...line.matchAll(/\S+/g)].map((match) => [match.index, match.index + match[0].length]);
+}
+
+// Where the last word or two begin, if they can stand alone: what may stay behind, or come back later on its own.
+function remnants(line) {
+  const spans = words(line);
+  return [1, 2]
+    .filter((count) => spans.length > count && !(count === 1 && SLIGHT_WORDS.has(line.slice(...spans.at(-1)))))
+    .map((count) => spans.at(-count)[0]);
+}
+
+// Where a thought can stop short: a word or two before its end, never before its second word.
+function breaks(line) {
+  const spans = words(line);
+  return [1, 2].filter((count) => spans.length - count >= 2).map((count) => line.slice(0, spans.at(-count - 1)[1]));
+}
+
+// How a thought may come back slightly wrong: a word or two missing at either end, and not left hanging.
+function alterations(line) {
+  const spans = words(line);
+  return [1, 2]
+    .filter((count) => spans.length - count >= 2)
+    .flatMap((count) => [line.slice(0, spans.at(-count - 1)[1]), line.slice(spans[count][0])])
+    .filter((version) => !OPEN_WORDS.has(version.slice(version.lastIndexOf(" ") + 1)));
+}
+
+// Earlier fragments that can come back: not the last two, not a sound, and not one recalled recently.
+function recallable(mind, derive) {
+  return mind.said
+    .slice(2)
+    .filter((line) => FRAGMENT_FAMILY.get(line) !== "hesitation" && !mind.recalled.includes(line) && derive(line).length);
+}
+
+function weighted(weights, allowed = () => true) {
+  const options = Object.keys(weights).filter(allowed);
+  let roll = Math.random() * options.reduce((sum, key) => sum + weights[key], 0);
+  return options.find((key) => (roll -= weights[key]) < 0) ?? options.at(-1);
+}
+
+function thoughtFade() {
+  return { fadeIn: rand(6, 9), hold: rand(2.2, 4), fadeOut: rand(7, 10), ease: rand(0.8, 1.25) };
+}
+
+// A thought is planned whole as it begins: the lines it may show, and marks that each show a span of one line on one of
+// three sheets of type (two for thoughts, one for what stays behind) with a fade of its own. A mark that starts at full
+// strength where another on the same sheet ends replaces it in the same frame, so a line can lose or gain letters without
+// a visible cut.
+function thoughtPlan(behaviour, lines, marks) {
+  const full = marks.map((mark) => ({ start: 0, peak: 1, ease: 1, spans: [[0, lines[mark.line].length]], ...mark }));
+  for (const mark of full) mark.end = mark.start + mark.fadeIn + mark.hold + mark.fadeOut;
+  return {
+    behaviour,
+    lines: lines.map((line) => ({ text: line, placed: false })),
+    marks: full,
+    end: Math.max(...full.map((mark) => mark.end))
+  };
+}
+
+function markLevel(mark, time) {
+  const age = time - mark.start;
+  if (age < mark.fadeIn) return mark.peak * smoothstep(0, 1, age / mark.fadeIn) ** mark.ease;
+  if (age < mark.fadeIn + mark.hold) return mark.peak;
+  return mark.peak * (1 - smoothstep(0, 1, (age - mark.fadeIn - mark.hold) / mark.fadeOut)) ** mark.ease;
+}
+
+// The family memory chooses what comes next; only then is it decided what the thought does. A correction is chosen as a
+// quick second thought would be. A recalled piece prefers the family the thought had turned to, and appears somewhere new.
+function planThought(mind) {
+  const fragment = chooseFragment(mind, mind.gap);
+  if (FRAGMENT_FAMILY.get(fragment) === "hesitation") {
+    remember(mind, fragment);
+    return planSound(fragment);
+  }
+
+  const echoes = recallable(mind, remnants);
+  const returns = recallable(mind, alterations);
+  const allowed = {
+    whole: true,
+    corrected: true,
+    interrupted: breaks(fragment).length > 0,
+    residue: remnants(fragment).length > 0,
+    echo: echoes.length > 0,
+    altered: returns.length > 0
+  };
+  const behaviour = weighted(THOUGHT_BEHAVIOURS, (key) => allowed[key]);
+  const fade = thoughtFade();
+
+  if (behaviour === "echo" || behaviour === "altered") {
+    const sources = behaviour === "echo" ? echoes : returns;
+    const kin = sources.filter((line) => FRAGMENT_FAMILY.get(line) === FRAGMENT_FAMILY.get(fragment));
+    const source = pick(kin.length ? kin : sources);
+    const version = behaviour === "echo" ? source.slice(pick(remnants(source))) : pick(alterations(source));
+    mind.recalled = [source, ...mind.recalled].slice(0, RECALL_MEMORY);
+    mind.family = FRAGMENT_FAMILY.get(source);
+    if (behaviour === "echo") fade.hold = rand(1.5, 3);
+    return thoughtPlan(behaviour, [version], [{ sheet: "a", line: 0, ...fade }]);
+  }
+
+  remember(mind, fragment);
+
+  if (behaviour === "interrupted") {
+    // It never quite arrives, and is let go sooner.
+    const reach = rand(0.6, 0.9);
+    return thoughtPlan(behaviour, [pick(breaks(fragment))], [
+      { sheet: "a", line: 0, fadeIn: fade.fadeIn * reach, peak: smoothstep(0, 1, reach), hold: rand(0.3, 1.2), fadeOut: rand(5, 7.5) }
+    ]);
+  }
+
+  if (behaviour === "residue") {
+    // As the thought begins to go, its last word or two are handed to the third sheet and stay a few seconds longer.
+    const cut = pick(remnants(fragment));
+    const held = fade.fadeIn + fade.hold;
+    return thoughtPlan(behaviour, [fragment], [
+      { sheet: "a", line: 0, fadeIn: fade.fadeIn, hold: fade.hold, fadeOut: 0, ease: fade.ease },
+      { sheet: "a", line: 0, spans: [[0, fragment.slice(0, cut).trimEnd().length]], start: held, fadeIn: 0, hold: 0, fadeOut: fade.fadeOut, ease: fade.ease },
+      { sheet: "r", line: 0, spans: [[cut, fragment.length]], start: held, fadeIn: 0, hold: fade.fadeOut + rand(-1, 2), fadeOut: rand(3, 6) }
+    ]);
+  }
+
+  if (behaviour === "corrected") {
+    // The next thought arrives elsewhere while this one is still going, and they share a few seconds.
+    const correction = chooseFragment(mind, "short");
+    if (FRAGMENT_FAMILY.get(correction) !== "hesitation") {
+      remember(mind, correction);
+      const start = fade.fadeIn + fade.hold + fade.fadeOut * rand(0.15, 0.35);
+      return thoughtPlan(behaviour, [fragment, correction], [
+        { sheet: "a", line: 0, ...fade },
+        { sheet: "b", line: 1, start, fadeIn: rand(3.5, 5.5), hold: rand(2.2, 4), fadeOut: rand(7, 10), ease: rand(0.8, 1.25) }
+      ]);
+    }
+  }
+
+  return thoughtPlan("whole", [fragment], [{ sheet: "a", line: 0, ...fade }]);
+}
+
+// Lengths from `from` to `to` in a few steps of at least two letters.
+function soundRamp(from, to, stages = 3 + Math.floor(rand(0, 3))) {
+  const steps = Math.max(1, Math.min(stages - 1, Math.floor((to - from) / 2)));
+  const parts = Array(steps).fill(2);
+  for (let spare = to - from - 2 * steps; spare > 0; spare -= 1) parts[Math.floor(rand(0, steps))] += 1;
+  return parts.reduce((lengths, part) => [...lengths, lengths.at(-1) + part], [from]);
+}
+
+// Written length is duration. A sound is shown at a few lengths in turn, seconds apart and a handful of letters at a time,
+// never letter by letter. It keeps its first letter where it is: letters it gains fade in on the second sheet and are then
+// taken into the first; letters it lets go are handed to the second sheet and fade from there.
+function planSound(sound) {
+  const shape = weighted(SOUND_BEHAVIOURS);
+  const full = sound.length;
+  const short = sound.indexOf(sound.at(-1)) + 2 + Math.floor(rand(0, 2));
+  let lengths;
+  if (shape === "grow") lengths = soundRamp(short, full);
+  else if (shape === "release") lengths = soundRamp(short, full).reverse();
+  else if (shape === "swell") lengths = [...soundRamp(short, full, 3), Math.round(lerp(short, full, rand(0.3, 0.55)))];
+  else lengths = soundRamp(short, Math.round(lerp(short, full, rand(0.45, 0.7))), 2 + Math.floor(rand(0, 2)));
+
+  const marks = [];
+  let start = 0;
+  let settled = rand(5, 8);
+  lengths.forEach((length, index) => {
+    const mark = { sheet: "a", line: 0, spans: [[0, length]], start, fadeIn: index ? 0 : settled, hold: 0, fadeOut: 0 };
+    marks.push(mark);
+    const turn = settled + rand(2, 4);
+    const next = lengths[index + 1];
+    if (next === undefined) {
+      mark.hold = turn - start - mark.fadeIn;
+      mark.fadeOut = shape === "broken" ? rand(3.5, 5) : rand(6, 9);
+      return;
+    }
+    const change = rand(2, 3.5);
+    const grows = next > length;
+    marks.push({
+      sheet: "b",
+      line: 0,
+      spans: grows ? [[length, next]] : [[next, length]],
+      start: turn,
+      fadeIn: grows ? change : 0,
+      hold: 0,
+      fadeOut: grows ? 0 : change
+    });
+    start = grows ? turn + change : turn;
+    mark.hold = start - mark.start - mark.fadeIn;
+    settled = turn + change;
+  });
+  return thoughtPlan(shape, [sound], marks);
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -1032,24 +1251,29 @@ if (renderer) {
   const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
   let morphStrength = state.reducedMotion ? MORPH.reduced : 1;
 
-  const textCanvas = document.createElement("canvas");
-  textCanvas.width = TEXT_CANVAS_WIDTH;
-  textCanvas.height = TEXT_CANVAS_HEIGHT;
-  const textContext = textCanvas.getContext("2d", { willReadFrequently: true });
-  const textTexture = new CanvasTexture(textCanvas);
-  textTexture.minFilter = LinearMipmapLinearFilter;
-  // Haze is applied by hand, as for the layers, so the sentence compresses with the rest of the volume.
-  const textMaterial = new MeshBasicMaterial({
-    color: new Color(TONE.text),
-    alphaMap: textTexture,
-    transparent: true,
-    depthWrite: false,
-    fog: false,
-    opacity: 0
-  });
-  const textMesh = new Mesh(plane, textMaterial);
-  textMesh.visible = false;
-  scene.add(textMesh);
+  // Two sheets of type for thoughts that may briefly overlap, and a third for what a thought leaves behind.
+  const textSheets = Object.fromEntries(
+    ["a", "b", "r"].map((name) => {
+      const sheet = document.createElement("canvas");
+      sheet.width = TEXT_CANVAS_WIDTH;
+      sheet.height = TEXT_CANVAS_HEIGHT;
+      const texture = new CanvasTexture(sheet);
+      texture.minFilter = LinearMipmapLinearFilter;
+      // Haze is applied by hand, as for the layers, so the sentence compresses with the rest of the volume.
+      const material = new MeshBasicMaterial({
+        color: new Color(TONE.text),
+        alphaMap: texture,
+        transparent: true,
+        depthWrite: false,
+        fog: false,
+        opacity: 0
+      });
+      const mesh = new Mesh(plane, material);
+      mesh.visible = false;
+      scene.add(mesh);
+      return [name, { context: sheet.getContext("2d", { willReadFrequently: true }), texture, material, mesh, mark: null, line: null, level: 0 }];
+    })
+  );
   const textTone = new Color(TONE.text).getRGB({}, SRGBColorSpace);
   const inkLevel = new Color(TONE.ink).getRGB({}, SRGBColorSpace).g;
   const tone = {};
@@ -1060,18 +1284,11 @@ if (renderer) {
     wait: rand(26, 40),
     gap: "long",
     family: null,
-    fadeIn: 0,
-    hold: 0,
-    fadeOut: 0,
-    depth: 6,
-    region: null,
-    recent: [],
     said: [],
-    fx: 0,
-    fy: 0,
-    fontPx: TEXT_FONT_PX,
-    measured: 0,
-    base: new Vector3()
+    recalled: [],
+    thought: null,
+    region: null,
+    recent: []
   };
   const eye = new Vector3();
   const anchor = new Vector3();
@@ -1079,7 +1296,7 @@ if (renderer) {
   const layerCentre = new Vector3();
 
   renderer.setClearColor(TONE.field, 1);
-  textTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  for (const sheet of Object.values(textSheets)) sheet.texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   function queueTextures() {
     state.textureAspect = state.aspect;
@@ -1140,7 +1357,7 @@ if (renderer) {
       queueTextures();
     }
 
-    if (text.stage !== "wait") placeSentence();
+    for (const line of text.thought ? text.thought.lines : []) if (line.placed) sentenceBase(line, line.fx, line.fy, line.depth, line.base);
 
     canvas.dataset.dpr = String(renderer.getPixelRatio());
     renderStill();
@@ -1151,38 +1368,49 @@ if (renderer) {
     state.resizeId = window.requestAnimationFrame(resize);
   }
 
-  function textWorldScale(depth) {
+  function textWorldScale(depth, linePx) {
     const fontPx = clamp(state.height * 0.018, 14, 34);
-    return (fontPx * 2 * depth * HALF_TAN) / state.height / text.fontPx;
+    return (fontPx * 2 * depth * HALF_TAN) / state.height / linePx;
   }
 
-  function drawSentence(sentence) {
-    text.fontPx = TEXT_FONT_PX;
-    textContext.font = `400 ${text.fontPx}px ${TEXT_FONT_FAMILY}`;
-    text.measured = textContext.measureText(sentence).width;
+  function measureLine(line) {
+    const context = textSheets.a.context;
+    line.fontPx = TEXT_FONT_PX;
+    context.font = `400 ${line.fontPx}px ${TEXT_FONT_FAMILY}`;
+    line.measured = context.measureText(line.text).width;
 
-    if (text.measured > TEXT_CANVAS_WIDTH - 96) {
-      text.fontPx = Math.floor((TEXT_FONT_PX * (TEXT_CANVAS_WIDTH - 96)) / text.measured);
-      textContext.font = `400 ${text.fontPx}px ${TEXT_FONT_FAMILY}`;
-      text.measured = textContext.measureText(sentence).width;
+    if (line.measured > TEXT_CANVAS_WIDTH - 96) {
+      line.fontPx = Math.floor((TEXT_FONT_PX * (TEXT_CANVAS_WIDTH - 96)) / line.measured);
+      context.font = `400 ${line.fontPx}px ${TEXT_FONT_FAMILY}`;
+      line.measured = context.measureText(line.text).width;
     }
+  }
 
-    textContext.fillStyle = "#000";
-    textContext.fillRect(0, 0, TEXT_CANVAS_WIDTH, TEXT_CANVAS_HEIGHT);
-    textContext.fillStyle = "#fff";
-    textContext.textAlign = "center";
-    textContext.textBaseline = "middle";
-    textContext.fillText(sentence, TEXT_CANVAS_WIDTH / 2, TEXT_CANVAS_HEIGHT / 2);
-    textTexture.needsUpdate = true;
+  // Each span is set where it falls in the whole line, so pieces of one line on different sheets stay in register.
+  function drawSpans(sheet, line, spans) {
+    const context = sheet.context;
+    const left = (TEXT_CANVAS_WIDTH - line.measured) / 2;
+    context.font = `400 ${line.fontPx}px ${TEXT_FONT_FAMILY}`;
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, TEXT_CANVAS_WIDTH, TEXT_CANVAS_HEIGHT);
+    context.fillStyle = "#fff";
+    context.textAlign = "left";
+    context.textBaseline = "middle";
+    for (const [from, to] of spans) {
+      context.fillText(line.text.slice(from, to), left + context.measureText(line.text.slice(0, from)).width, TEXT_CANVAS_HEIGHT / 2);
+    }
+    sheet.texture.needsUpdate = true;
   }
 
   // Defocus is baked into the type once per sentence, as it is into the residue: a small gaussian spread of the glyphs.
-  function softenSentence(sigma) {
+  function softenSentence(sheet, line) {
+    const sigma = line.sigma;
     if (sigma < 0.4) return;
 
+    const textContext = sheet.context;
     const radius = Math.ceil(sigma * 3);
-    const x0 = Math.max(0, Math.floor((TEXT_CANVAS_WIDTH - text.measured) / 2) - radius * 2);
-    const x1 = Math.min(TEXT_CANVAS_WIDTH, Math.ceil((TEXT_CANVAS_WIDTH + text.measured) / 2) + radius * 2);
+    const x0 = Math.max(0, Math.floor((TEXT_CANVAS_WIDTH - line.measured) / 2) - radius * 2);
+    const x1 = Math.min(TEXT_CANVAS_WIDTH, Math.ceil((TEXT_CANVAS_WIDTH + line.measured) / 2) + radius * 2);
     const width = x1 - x0;
     const height = TEXT_CANVAS_HEIGHT;
     const image = textContext.getImageData(x0, 0, width, height);
@@ -1218,21 +1446,14 @@ if (renderer) {
     }
 
     textContext.putImageData(image, x0, 0);
-    textTexture.needsUpdate = true;
+    sheet.texture.needsUpdate = true;
   }
 
-  function sentenceBase(fx, fy, depth, target) {
+  function sentenceBase(line, fx, fy, depth, target) {
     const halfWidth = HALF_TAN * depth * state.aspect;
-    const halfText = (text.measured * textWorldScale(depth)) / 2 / halfWidth;
+    const halfText = (line.measured * textWorldScale(depth, line.fontPx)) / 2 / halfWidth;
 
     return target.set(clamp(fx, -0.9 + halfText, 0.9 - halfText) * halfWidth, fy * HALF_TAN * depth, -depth);
-  }
-
-  function placeSentence() {
-    const scale = textWorldScale(text.depth);
-
-    textMesh.scale.set(TEXT_CANVAS_WIDTH * scale, TEXT_CANVAS_HEIGHT * scale, 1);
-    sentenceBase(text.fx, text.fy, text.depth, text.base);
   }
 
   function textHaze(depth) {
@@ -1277,13 +1498,13 @@ if (renderer) {
   // while the sentence is present. Contrast is relative to the same type on open field at the same depth, so haze is not
   // counted against far placements. `front` is occlusion by nearer veils, which read as passing behind (a nearer stain over
   // dark type reads as type on the stain, so it only counts as lost contrast); `surround` is residue just around the sentence.
-  function assessPlacement(fx, fy, depth, times, levels) {
+  function assessPlacement(line, fx, fy, depth, times, levels) {
     const field = fieldColor.g;
     const type = lerp(textTone.g, field, textHaze(depth));
     const reference = field - type;
-    const worldScale = textWorldScale(depth);
-    const halfText = (text.measured / 2) * worldScale;
-    const typeHeight = text.fontPx * worldScale;
+    const worldScale = textWorldScale(depth, line.fontPx);
+    const halfText = (line.measured / 2) * worldScale;
+    const typeHeight = line.fontPx * worldScale;
     const rows = [-0.18, 0.02, 0.22];
     const columns = 24;
     const ratios = [];
@@ -1317,7 +1538,7 @@ if (renderer) {
     for (let t = 0; t < times.length; t += 1) {
       ahead = times[t];
       cameraPosition(state.time + times[t] * (state.reducedMotion ? 0.5 : 1), eye);
-      scale = alignOffset(depth, sentenceBase(fx, fy, depth, anchor), eye);
+      scale = alignOffset(depth, sentenceBase(line, fx, fy, depth, anchor), eye);
 
       for (let c = 0; c < columns; c += 1) {
         const dx = ((c + 0.5) / columns - 0.5) * 2 * halfText;
@@ -1344,10 +1565,9 @@ if (renderer) {
 
   // Placement looks for a sentence that is in the volume rather than on it: most often partly behind a veil, otherwise
   // open but close to residue that parallax will set it against. Readability comes first.
-  function chooseSentencePlacement() {
+  function chooseSentencePlacement(line, times) {
     const region = pick(TEXT_REGIONS.filter((zone) => zone !== text.region));
     const within = Math.random() < 0.6;
-    const times = [text.fadeIn * 0.7, text.fadeIn + text.hold * 0.5];
     const levels = layers.map((layer) => toneLevel(layer.material.color));
     let best = null;
 
@@ -1357,7 +1577,7 @@ if (renderer) {
       if (Math.abs(fx) < 0.22 && Math.abs(fy) < 0.28) continue;
 
       const depth = pick(TEXT_DEPTHS) + rand(-0.2, 0.2);
-      const fit = assessPlacement(fx, fy, depth, times, levels);
+      const fit = assessPlacement(line, fx, fy, depth, times, levels);
       let score;
 
       if (fit.mean < 0.7 || fit.low > 0.2) score = fit.mean - 2;
@@ -1373,81 +1593,60 @@ if (renderer) {
     return best;
   }
 
-  // A fragment cannot return until most of the others have been shown, about half an hour at the usual intervals. The
-  // choice knows only the last fragment's family and the silence since it, never the image.
-  function chooseFragment() {
-    const previous = text.family;
-    const unsaid = (families) => families.flatMap((family) => FRAGMENTS[family]).filter((line) => !text.said.includes(line));
-    let related = null;
-    if (previous && previous !== "hesitation") {
-      if (text.gap === "short" && Math.random() < TEXT_MEMORY.short) related = [...new Set([previous, "correcting"])];
-      else if (text.gap === "normal" && Math.random() < TEXT_MEMORY.normal) related = [previous, ...FAMILY_NEIGHBOURS[previous]];
-    }
-    const near = related ? unsaid(related) : [];
-    if (near.length) return pick(near);
-    return pick(unsaid(Object.keys(FRAGMENTS).filter((family) => !(previous === "hesitation" && family === "hesitation"))));
-  }
-
-  function beginSentence() {
-    const fragment = chooseFragment();
-    text.said = [fragment, ...text.said].slice(0, FRAGMENT_LINES.length - 10);
-    text.family = FRAGMENT_FAMILY.get(fragment);
-    drawSentence(fragment);
-    text.fadeIn = rand(6, 9);
-    text.hold = rand(2.2, 4);
-    text.fadeOut = rand(7, 10);
-
-    const placement = chooseSentencePlacement();
+  // A line is placed when its first mark appears, from the fade of that mark, and every later span of it stays there.
+  function placeLine(line, mark) {
+    measureLine(line);
+    const placement = chooseSentencePlacement(line, [mark.fadeIn * 0.7, mark.fadeIn + mark.hold * 0.5]);
     text.region = placement.region;
-    text.depth = placement.depth;
-    text.fx = placement.fx;
-    text.fy = placement.fy;
-    text.recent = [[text.fx, text.fy], ...text.recent].slice(0, 3);
-    softenSentence(TEXT_SOFTNESS * text.fontPx * smoothstep(0.5, 3.5, Math.abs(text.depth - FIXATION_DEPTH)));
-    text.stage = "in";
-    text.elapsed = 0;
-    placeSentence();
-    textMesh.visible = true;
+    line.depth = placement.depth;
+    line.fx = placement.fx;
+    line.fy = placement.fy;
+    text.recent = [[line.fx, line.fy], ...text.recent].slice(0, 3);
+    line.sigma = TEXT_SOFTNESS * line.fontPx * smoothstep(0.5, 3.5, Math.abs(line.depth - FIXATION_DEPTH));
+    line.base = sentenceBase(line, line.fx, line.fy, line.depth, new Vector3());
+    line.placed = true;
   }
 
-  function updateSentence(dt) {
+  function showMark(sheet, mark) {
+    sheet.mark = mark;
+    sheet.mesh.visible = Boolean(mark);
+    if (!mark) return;
+
+    const line = text.thought.lines[mark.line];
+    if (!line.placed) placeLine(line, mark);
+    sheet.line = line;
+    drawSpans(sheet, line, mark.spans);
+    softenSentence(sheet, line);
+  }
+
+  // The silences between thoughts are as before; whatever a thought does happens within its own appearance.
+  function updateThought(dt) {
     text.elapsed += dt;
 
     if (text.stage === "wait") {
-      if (text.elapsed >= text.wait && state.ready) beginSentence();
-      return 0;
-    }
-
-    if (text.stage === "in") {
-      if (text.elapsed >= text.fadeIn) {
-        text.stage = "hold";
-        text.elapsed = 0;
-        return 1;
-      }
-      return smoothstep(0, 1, text.elapsed / text.fadeIn);
-    }
-
-    if (text.stage === "hold") {
-      if (text.elapsed >= text.hold) {
-        text.stage = "out";
-        text.elapsed = 0;
-      }
-      return 1;
-    }
-
-    if (text.elapsed >= text.fadeOut) {
-      text.stage = "wait";
+      if (text.elapsed < text.wait || !state.ready) return;
+      text.thought = planThought(text);
+      text.stage = "thought";
       text.elapsed = 0;
-      const { long, normal, short } = TEXT_GAPS;
-      // After a quick return, only a long or a moderate silence.
-      const roll = Math.random() * (text.gap === "short" ? long.chance + normal.chance : long.chance + normal.chance + short.chance);
-      text.gap = roll < long.chance ? "long" : roll < long.chance + normal.chance ? "normal" : "short";
-      text.wait = rand(...TEXT_GAPS[text.gap].range);
-      textMesh.visible = false;
-      return 0;
     }
 
-    return 1 - smoothstep(0, 1, text.elapsed / text.fadeOut);
+    const time = text.elapsed;
+    const finished = time >= text.thought.end;
+    for (const [name, sheet] of Object.entries(textSheets)) {
+      const mark = finished ? null : text.thought.marks.find((m) => m.sheet === name && time >= m.start && time < m.end) ?? null;
+      if (mark !== sheet.mark) showMark(sheet, mark);
+      sheet.level = mark ? markLevel(mark, time) : 0;
+    }
+    if (!finished) return;
+
+    text.thought = null;
+    text.stage = "wait";
+    text.elapsed = 0;
+    const { long, normal, short } = TEXT_GAPS;
+    // After a quick return, only a long or a moderate silence.
+    const roll = Math.random() * (text.gap === "short" ? long.chance + normal.chance : long.chance + normal.chance + short.chance);
+    text.gap = roll < long.chance ? "long" : roll < long.chance + normal.chance ? "normal" : "short";
+    text.wait = rand(...TEXT_GAPS[text.gap].range);
   }
 
   function updatePhase(dt) {
@@ -1724,24 +1923,28 @@ if (renderer) {
   }
 
   function updateText(dt) {
-    const envelope = updateSentence(dt);
-    if (!textMesh.visible) return;
+    updateThought(dt);
 
-    const position = textMesh.position.copy(text.base);
-    const scale = alignOffset(text.depth, position);
-    const worldScale = textWorldScale(text.depth) * scale;
-    textMesh.scale.set(TEXT_CANVAS_WIDTH * worldScale, TEXT_CANVAS_HEIGHT * worldScale, 1);
+    for (const sheet of Object.values(textSheets)) {
+      if (!sheet.mesh.visible) continue;
 
-    // Like the layers: haze by depth, and while depth compresses a near sentence takes on mid-depth haze and recedes a little.
-    const haze = textHaze(text.depth);
-    const nearness = clamp((FIXATION_DEPTH - text.depth) / (FIXATION_DEPTH - FOG_NEAR), 0, 1);
-    textMaterial.color.setRGB(
-      lerp(textTone.r, fieldColor.r, haze),
-      lerp(textTone.g, fieldColor.g, haze),
-      lerp(textTone.b, fieldColor.b, haze),
-      SRGBColorSpace
-    );
-    textMaterial.opacity = TEXT_MAX_OPACITY * envelope * (1 - 0.25 * state.params.compress * nearness);
+      const line = sheet.line;
+      const position = sheet.mesh.position.copy(line.base);
+      const scale = alignOffset(line.depth, position);
+      const worldScale = textWorldScale(line.depth, line.fontPx) * scale;
+      sheet.mesh.scale.set(TEXT_CANVAS_WIDTH * worldScale, TEXT_CANVAS_HEIGHT * worldScale, 1);
+
+      // Like the layers: haze by depth, and while depth compresses a near sentence takes on mid-depth haze and recedes a little.
+      const haze = textHaze(line.depth);
+      const nearness = clamp((FIXATION_DEPTH - line.depth) / (FIXATION_DEPTH - FOG_NEAR), 0, 1);
+      sheet.material.color.setRGB(
+        lerp(textTone.r, fieldColor.r, haze),
+        lerp(textTone.g, fieldColor.g, haze),
+        lerp(textTone.b, fieldColor.b, haze),
+        SRGBColorSpace
+      );
+      sheet.material.opacity = TEXT_MAX_OPACITY * sheet.level * (1 - 0.25 * state.params.compress * nearness);
+    }
   }
 
   function step(dt) {
