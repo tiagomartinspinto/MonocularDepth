@@ -241,34 +241,28 @@ const TEXT_REGIONS = [
 ];
 
 // Authored whole, never assembled: perceptual checks, corrections and hesitations completed by the moving image.
-const FRAGMENTS = [
-  "again",
-  "behind that",
-  "no / the other one",
-  "hm",
-  "still there",
-  "closer",
-  "same place / maybe",
-  "a moment ago",
-  "that part",
-  "further back",
-  "wait",
-  "was that part there before",
-  "ah",
-  "not that edge",
-  "just beside it",
-  "no",
-  "can still find this part",
-  "before it moved",
-  "still",
-  "inside / no",
-  "that bit left",
-  "here / a little lower",
-  "there",
-  "it moved / or I did",
-  "after that",
-  "not there"
-];
+// Loose families give the thought a weak memory of itself. They are never shown and imply no order.
+const FRAGMENTS = {
+  finding: ["there", "again", "found it", "behind that", "just beside it"],
+  remembering: ["a moment ago", "was that part there before", "before it moved", "it was darker", "I thought this was closer"],
+  holding: ["still", "wait", "can still find this part", "not gone"],
+  correcting: ["no", "not that edge", "no / the other one", "here / a little lower", "same place / maybe", "it moved / or I did"],
+  losing: ["that bit left", "not there", "there was more here", "I had it / just now"],
+  hesitation: ["hm", "ah"]
+};
+// Where a returning thought may drift after a moderate pause: its own family or one beside it.
+const FAMILY_NEIGHBOURS = {
+  finding: ["holding", "correcting"],
+  remembering: ["correcting", "losing"],
+  holding: ["losing", "remembering"],
+  correcting: ["finding", "remembering"],
+  losing: ["finding", "remembering"]
+};
+// How often the next fragment stays near the last one's family: sometimes after a moderate pause, usually after a quick
+// return (then its own family or a correction). A long silence forgets it. A hesitation is never followed by another.
+const TEXT_MEMORY = { normal: 0.3, short: 0.75 };
+const FRAGMENT_LINES = Object.values(FRAGMENTS).flat();
+const FRAGMENT_FAMILY = new Map(Object.entries(FRAGMENTS).flatMap(([family, lines]) => lines.map((line) => [line, family])));
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -1063,7 +1057,8 @@ if (renderer) {
     stage: "wait",
     elapsed: 0,
     wait: rand(26, 40),
-    quick: false,
+    gap: "long",
+    family: null,
     fadeIn: 0,
     hold: 0,
     fadeOut: 0,
@@ -1377,10 +1372,25 @@ if (renderer) {
     return best;
   }
 
+  // A fragment cannot return until most of the others have been shown, about half an hour at the usual intervals. The
+  // choice knows only the last fragment's family and the silence since it, never the image.
+  function chooseFragment() {
+    const previous = text.family;
+    const unsaid = (families) => families.flatMap((family) => FRAGMENTS[family]).filter((line) => !text.said.includes(line));
+    let related = null;
+    if (previous && previous !== "hesitation") {
+      if (text.gap === "short" && Math.random() < TEXT_MEMORY.short) related = [...new Set([previous, "correcting"])];
+      else if (text.gap === "normal" && Math.random() < TEXT_MEMORY.normal) related = [previous, ...FAMILY_NEIGHBOURS[previous]];
+    }
+    const near = related ? unsaid(related) : [];
+    if (near.length) return pick(near);
+    return pick(unsaid(Object.keys(FRAGMENTS).filter((family) => !(previous === "hesitation" && family === "hesitation"))));
+  }
+
   function beginSentence() {
-    // A fragment cannot return until most of the others have been shown, about half an hour at the usual intervals.
-    const fragment = pick(FRAGMENTS.filter((line) => !text.said.includes(line)));
-    text.said = [fragment, ...text.said].slice(0, FRAGMENTS.length - 10);
+    const fragment = chooseFragment();
+    text.said = [fragment, ...text.said].slice(0, FRAGMENT_LINES.length - 10);
+    text.family = FRAGMENT_FAMILY.get(fragment);
     drawSentence(fragment);
     text.fadeIn = rand(6, 9);
     text.hold = rand(2.2, 4);
@@ -1429,9 +1439,9 @@ if (renderer) {
       text.elapsed = 0;
       const { long, normal, short } = TEXT_GAPS;
       // After a quick return, only a long or a moderate silence.
-      const roll = Math.random() * (text.quick ? long.chance + normal.chance : long.chance + normal.chance + short.chance);
-      text.quick = roll >= long.chance + normal.chance;
-      text.wait = rand(...(roll < long.chance ? long.range : text.quick ? short.range : normal.range));
+      const roll = Math.random() * (text.gap === "short" ? long.chance + normal.chance : long.chance + normal.chance + short.chance);
+      text.gap = roll < long.chance ? "long" : roll < long.chance + normal.chance ? "normal" : "short";
+      text.wait = rand(...TEXT_GAPS[text.gap].range);
       textMesh.visible = false;
       return 0;
     }
