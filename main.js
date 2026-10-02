@@ -1,6 +1,7 @@
 import {
   CanvasTexture,
   Color,
+  Data3DTexture,
   DataTexture,
   LinearFilter,
   LinearMipmapLinearFilter,
@@ -9,10 +10,12 @@ import {
   PerspectiveCamera,
   PlaneGeometry,
   RGBAFormat,
+  RepeatWrapping,
   SRGBColorSpace,
   Scene,
   Vector2,
   Vector3,
+  Vector4,
   WebGLRenderer
 } from "./vendor/three/three.module.js";
 
@@ -114,6 +117,26 @@ const EDGE = {
   firm: 0.35,
   cut: [0.035, 0.12],
   waver: 0.06
+};
+// Viscous flow: every field reads its map through a slow, smooth deformation attached to its own material, so it is
+// never only carried. Material gathers on one side and thins on another, a lobe extends, a neck narrows, an opening
+// closes while another opens, and parts of one contour lag behind others. Nearby points move together; larger regions
+// slowly stretch against one another. Two displacements are drawn from one seamless, precomputed volume of gradient
+// noise whose third axis is time: a broad one at the scale of the field's own masses, and a finer one, carried by the
+// broad (carry), so a contour disagrees with itself locally. wave and reach are in units of the field's own mass size:
+// wave is the length of a feature, reach the furthest a point is displaced, and their ratio keeps every stretch far
+// short of folding. period is how long, in seconds, one feature takes to become another; wander is how long the
+// sampling takes to move one feature across, so the deformation does not revisit itself on a beat. Anchored fields
+// deform at a share of the passing fields' reach and pace. cells and size are the noise volume's lattice and texels.
+const FLOW = {
+  broad: { wave: 2.4, reach: 0.18, period: 46 },
+  fine: { wave: 0.55, reach: 0.035, period: 27 },
+  carry: 0.6,
+  wander: 330,
+  anchored: { reach: 0.8, pace: 0.55 },
+  reduced: { reach: 0.6, pace: 0.5 },
+  cells: 8,
+  size: 64
 };
 // Passage: some fields are not held in place but carried slowly across the frame, all in one oblique direction, while
 // the others stay where they are, like a disturbance held on the retina while the field beyond it goes by. Each passing
@@ -564,6 +587,84 @@ function createNoise(seed) {
 }
 
 const noise = createNoise(19);
+
+// The viscous flow's source: smooth gradient noise on a lattice that wraps every `cells` in all three axes, so the
+// volume repeats seamlessly in space and in time. Four independent channels: two for the broad displacement, two for the
+// fine. Built once, a slice at a time, like the residue maps.
+function* flowVolumeJob(size, cells) {
+  const random = mulberry32(2741);
+  const lattice = cells * cells * cells;
+  const grads = [];
+  for (let c = 0; c < 4; c += 1) {
+    const g = new Float32Array(lattice * 3);
+    for (let i = 0; i < lattice; i += 1) {
+      const z = random() * 2 - 1;
+      const a = random() * TAU;
+      const r = Math.sqrt(1 - z * z);
+      g[i * 3] = r * Math.cos(a);
+      g[i * 3 + 1] = r * Math.sin(a);
+      g[i * 3 + 2] = z;
+    }
+    grads.push(g);
+  }
+  const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+  const data = new Uint8Array(size * size * size * 4);
+  const corners = new Int32Array(8);
+  const offsets = new Float32Array(24);
+  const step = cells / size;
+  const corner = (g, n) => g[corners[n]] * offsets[n * 3] + g[corners[n] + 1] * offsets[n * 3 + 1] + g[corners[n] + 2] * offsets[n * 3 + 2];
+
+  for (let k = 0; k < size; k += 1) {
+    const pz = k * step;
+    const z0 = Math.floor(pz);
+    const fz = pz - z0;
+    const w = fade(fz);
+    for (let j = 0; j < size; j += 1) {
+      const py = j * step;
+      const y0 = Math.floor(py);
+      const fy = py - y0;
+      const v = fade(fy);
+      for (let i = 0; i < size; i += 1) {
+        const px = i * step;
+        const x0 = Math.floor(px);
+        const fx = px - x0;
+        const u = fade(fx);
+        for (let n = 0; n < 8; n += 1) {
+          const dx = n & 1;
+          const dy = (n >> 1) & 1;
+          const dz = n >> 2;
+          corners[n] = ((((z0 + dz) % cells) * cells + ((y0 + dy) % cells)) * cells + ((x0 + dx) % cells)) * 3;
+          offsets[n * 3] = fx - dx;
+          offsets[n * 3 + 1] = fy - dy;
+          offsets[n * 3 + 2] = fz - dz;
+        }
+        const index = ((k * size + j) * size + i) * 4;
+        for (let c = 0; c < 4; c += 1) {
+          const g = grads[c];
+          const x00 = lerp(corner(g, 0), corner(g, 1), u);
+          const x10 = lerp(corner(g, 2), corner(g, 3), u);
+          const x01 = lerp(corner(g, 4), corner(g, 5), u);
+          const x11 = lerp(corner(g, 6), corner(g, 7), u);
+          const value = lerp(lerp(x00, x10, v), lerp(x01, x11, v), w);
+          data[index + c] = Math.round(clamp(0.5 + value / 1.1, 0, 1) * 255);
+        }
+      }
+    }
+    yield;
+  }
+
+  const texture = new Data3DTexture(data, size, size, size);
+  texture.format = RGBAFormat;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.wrapR = RepeatWrapping;
+  texture.generateMipmaps = false;
+  texture.unpackAlignment = 1;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 // A shared octave construction: each octave doubles in frequency and is rotated against the last so no grid direction
 // survives. A layer can carry its own character from octave 2 upwards (see residueCharacter).
@@ -1021,6 +1122,76 @@ if (renderer) {
     projectedAlign: NaN
   };
 
+  // Every residue field reads its map through this in place of the plain lookup: where on its map the material at this
+  // fragment now is. Displacements are measured on the material (fieldFrame maps the map onto its plane in view
+  // half-heights), so the deformation travels with a passing field instead of the field passing through it. Fragments
+  // the deformation cannot reach skip it.
+  const FLOW_GLSL = [
+    "uniform mediump sampler3D flowField;",
+    "uniform vec4 fieldFrame;",
+    "uniform vec4 flowShape;",
+    "uniform vec4 flowTime;",
+    "uniform vec4 flowOffset;",
+    "vec2 flowUv( vec2 uv ) {",
+    "\tvec2 margin = vec2( flowShape.x + flowShape.z ) / fieldFrame.xy;",
+    "\tif ( any( lessThan( uv, -margin ) ) || any( greaterThan( uv, 1.0 + margin ) ) ) return uv;",
+    "\tvec2 p = uv * fieldFrame.xy + fieldFrame.zw;",
+    "\tvec2 broad = textureLod( flowField, vec3( p * flowShape.y + flowOffset.xy, flowTime.x ), 0.0 ).xy * 2.0 - 1.0;",
+    "\tvec2 carried = p + broad * flowShape.x * flowTime.z;",
+    "\tvec2 fine = textureLod( flowField, vec3( carried * flowShape.w + flowOffset.zw, flowTime.y ), 0.0 ).zw * 2.0 - 1.0;",
+    "\treturn uv + ( broad * flowShape.x + fine * flowShape.z ) / fieldFrame.xy;",
+    "}",
+    ""
+  ].join("\n");
+  const flowField = { value: null };
+  let flowJob = flowVolumeJob(FLOW.size, FLOW.cells);
+  let flowCount = 0;
+  let flowClock = 0;
+  let flowStrength = state.reducedMotion ? FLOW.reduced.reach : 1;
+  const wrap = (value) => value - Math.floor(value);
+
+  // A field's own flow: its scale from the masses it was composed with, its own seeds, and a slightly different wave and
+  // pace. Seeded rather than drawn from Math.random, so nothing else in the work draws differently because of it.
+  function createFlow(spec) {
+    const random = mulberry32(Math.round(spec.depth * 7919) + 101 * flowCount);
+    flowCount += 1;
+    const [, , rx, ry] = LAYERS.find((layer) => layer.depth === spec.depth).masses[0];
+    const size = clamp(Math.sqrt(rx * NOMINAL_ASPECT * ry), 0.1, 0.45);
+    const share = ANCHOR_LAYERS.includes(spec.depth) ? FLOW.anchored : { reach: 1, pace: 1 };
+    const wave = lerp(0.9, 1.15, random());
+    const heading = random() * TAU;
+
+    return {
+      reach: [FLOW.broad.reach * size * share.reach, FLOW.fine.reach * size * share.reach],
+      freq: [1 / (FLOW.broad.wave * size * wave * FLOW.cells), 1 / (FLOW.fine.wave * size * wave * FLOW.cells)],
+      pace: share.pace * lerp(0.85, 1.2, random()),
+      seed: Array.from({ length: 6 }, () => random() * FLOW.cells),
+      heading: [Math.cos(heading), Math.sin(heading)],
+      uniforms: {
+        flowField,
+        fieldFrame: { value: new Vector4(1, 1, 0, 0) },
+        flowShape: { value: new Vector4() },
+        flowTime: { value: new Vector4() },
+        flowOffset: { value: new Vector4() }
+      }
+    };
+  }
+
+  // Replaces a field's alpha-map lookup with one read through its flow; `lines` read the map at fieldUv.
+  function readField(material, flow, uniforms, declarations, lines, key) {
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, flow.uniforms, uniforms);
+      shader.fragmentShader =
+        FLOW_GLSL +
+        declarations +
+        shader.fragmentShader.replace(
+          "#include <alphamap_fragment>",
+          ["#ifdef USE_ALPHAMAP", "\tvec2 fieldUv = flowUv( vAlphaMapUv );", ...lines, "#endif"].join("\n")
+        );
+    };
+    material.customProgramCacheKey = () => key;
+  }
+
   function createLayer(spec, index) {
     const color = new Color(spec.kind === "veil" ? TONE.field : TONE[spec.tone]);
     // Atmospheric fade is applied per layer rather than by scene fog, so it can be compressed.
@@ -1037,6 +1208,7 @@ if (renderer) {
 
     // An evolving field reads its map as one of its three stored states, or partway from one to another: each part of
     // the field changes when the transition reaches it in the stored order. Only this read of the map is replaced.
+    const flow = createFlow(spec);
     let morph = null;
     if (MORPH_LAYERS.includes(spec.depth)) {
       const uniforms = {
@@ -1045,23 +1217,19 @@ if (renderer) {
         stateProgress: { value: 0 },
         stateAmount: { value: 1 }
       };
-      material.onBeforeCompile = (shader) => {
-        Object.assign(shader.uniforms, uniforms);
-        shader.fragmentShader =
-          "uniform vec3 stateFrom;\nuniform vec3 stateTo;\nuniform float stateProgress;\nuniform float stateAmount;\n" +
-          shader.fragmentShader.replace(
-            "#include <alphamap_fragment>",
-            [
-              "#ifdef USE_ALPHAMAP",
-              "\tvec4 states = texture2D( alphaMap, vAlphaMapUv );",
-              `\tfloat reached = smoothstep( states.a - ${MORPH.front.toFixed(3)}, states.a + ${MORPH.front.toFixed(3)}, stateProgress * ${(1 + 2 * MORPH.front).toFixed(3)} - ${MORPH.front.toFixed(3)} );`,
-              "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
-              "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );",
-              "#endif"
-            ].join("\n")
-          );
-      };
-      material.customProgramCacheKey = () => "residue-states";
+      readField(
+        material,
+        flow,
+        uniforms,
+        "uniform vec3 stateFrom;\nuniform vec3 stateTo;\nuniform float stateProgress;\nuniform float stateAmount;\n",
+        [
+          "\tvec4 states = texture2D( alphaMap, fieldUv );",
+          `\tfloat reached = smoothstep( states.a - ${MORPH.front.toFixed(3)}, states.a + ${MORPH.front.toFixed(3)}, stateProgress * ${(1 + 2 * MORPH.front).toFixed(3)} - ${MORPH.front.toFixed(3)} );`,
+          "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
+          "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );"
+        ],
+        "residue-states"
+      );
       morph = {
         states: residueStates(spec, MORPH.amount),
         uniforms,
@@ -1082,24 +1250,20 @@ if (renderer) {
         statePhase: { value: new Vector2(rand(0, 1), rand(0, 1)) },
         stateAmount: { value: 1 }
       };
-      material.onBeforeCompile = (shader) => {
-        Object.assign(shader.uniforms, uniforms);
-        shader.fragmentShader =
-          "uniform vec2 statePhase;\nuniform float stateAmount;\n" +
-          shader.fragmentShader.replace(
-            "#include <alphamap_fragment>",
-            [
-              "#ifdef USE_ALPHAMAP",
-              "\tvec4 states = texture2D( alphaMap, vAlphaMapUv );",
-              `\tfloat towardR = 0.5 - 0.5 * cos( 6.2831853 * ( states.a * ${ANCHOR_WAVES[0].toFixed(3)} + statePhase.x ) );`,
-              `\tfloat towardB = 0.66 * ( 0.5 - 0.5 * cos( 6.2831853 * ( states.a * ${ANCHOR_WAVES[1].toFixed(3)} - statePhase.y ) ) );`,
-              "\tfloat evolved = mix( mix( states.g, states.r, towardR ), states.b, towardB );",
-              "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );",
-              "#endif"
-            ].join("\n")
-          );
-      };
-      material.customProgramCacheKey = () => "residue-anchored";
+      readField(
+        material,
+        flow,
+        uniforms,
+        "uniform vec2 statePhase;\nuniform float stateAmount;\n",
+        [
+          "\tvec4 states = texture2D( alphaMap, fieldUv );",
+          `\tfloat towardR = 0.5 - 0.5 * cos( 6.2831853 * ( states.a * ${ANCHOR_WAVES[0].toFixed(3)} + statePhase.x ) );`,
+          `\tfloat towardB = 0.66 * ( 0.5 - 0.5 * cos( 6.2831853 * ( states.a * ${ANCHOR_WAVES[1].toFixed(3)} - statePhase.y ) ) );`,
+          "\tfloat evolved = mix( mix( states.g, states.r, towardR ), states.b, towardB );",
+          "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );"
+        ],
+        "residue-anchored"
+      );
       morph = {
         states: residueStates(spec, ANCHOR.amount, ANCHOR),
         uniforms,
@@ -1110,6 +1274,8 @@ if (renderer) {
         moments: null,
         steady: 1
       };
+    } else {
+      readField(material, flow, {}, "", ["\tdiffuseColor.a *= texture2D( alphaMap, fieldUv ).g;"], "residue-flow");
     }
 
     // Each anchored field wanders on its own axis, near the passage direction, with its own sense and beats.
@@ -1147,6 +1313,7 @@ if (renderer) {
       driftRate: rand(0.8, 1.25),
       morph,
       aura,
+      flow,
       stream: null,
       origin: 0,
       placing: false,
@@ -1311,6 +1478,14 @@ if (renderer) {
   function buildTextures(budget) {
     const until = performance.now() + budget;
 
+    // The flow's noise volume is built first, within the same budget.
+    while (flowJob && performance.now() < until) {
+      const { done, value } = flowJob.next();
+      if (!done) continue;
+      flowField.value = value;
+      flowJob = null;
+    }
+
     while (state.buildQueue.length && performance.now() < until) {
       const layer = state.buildQueue[0];
       if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect, layer.morph ? layer.morph.states : undefined);
@@ -1326,6 +1501,16 @@ if (renderer) {
         layer.origin = Math.min(...layer.stream.tiles.filter((tile) => tile !== layer).map((tile) => tile.origin)) - 2 * PASSAGE.length;
       }
       if (layer.morph && layer.morph.anchored) layer.morph.moments = anchoredMoments(value.image.data);
+      // Where the map lies on its plane, in view half-heights, so the flow is measured on the material, not the map.
+      const spanX = 1 / value.repeat.x;
+      const spanY = 1 / value.repeat.y;
+      const widthScale = 2 * layer.spec.cover * state.textureAspect;
+      layer.flow.uniforms.fieldFrame.value.set(
+        spanX * widthScale,
+        spanY * 2 * COVER,
+        (-value.offset.x * spanX - 0.5) * widthScale,
+        (-value.offset.y * spanY - 0.5) * 2 * COVER
+      );
       const previous = layer.material.alphaMap;
       layer.material.alphaMap = value;
       layer.material.needsUpdate = !previous;
@@ -1855,6 +2040,37 @@ if (renderer) {
     }
   }
 
+  // The flow runs on its own clock, at each field's own pace. Each displacement's feature changes along the volume's time
+  // axis, and the sampling slowly travels across the volume, so no state of the deformation recurs on a beat. Reduced
+  // motion slows it and lessens its reach, easing in like every other change. Nothing here is allocated per frame.
+  function updateFlow(dt) {
+    flowStrength = lerp(flowStrength, state.reducedMotion ? FLOW.reduced.reach : 1, 1 - Math.exp(-dt / 5));
+    flowClock += dt * (state.reducedMotion ? FLOW.reduced.pace : 1);
+    const reach = flowField.value ? flowStrength : 0;
+
+    for (let index = 0; index < layers.length; index += 1) {
+      const flow = layers[index].flow;
+      const t = flowClock * flow.pace;
+      const drift = t / FLOW.wander;
+      const cos = flow.heading[0];
+      const sin = flow.heading[1];
+      const seed = flow.seed;
+      flow.uniforms.flowShape.value.set(flow.reach[0] * reach, flow.freq[0], flow.reach[1] * reach, flow.freq[1]);
+      flow.uniforms.flowTime.value.set(
+        wrap((t / FLOW.broad.period + seed[0]) / FLOW.cells),
+        wrap((t / FLOW.fine.period + seed[1]) / FLOW.cells),
+        FLOW.carry,
+        0
+      );
+      flow.uniforms.flowOffset.value.set(
+        wrap((seed[2] + drift * cos) / FLOW.cells),
+        wrap((seed[3] + drift * sin) / FLOW.cells),
+        wrap((seed[4] - drift * sin) / FLOW.cells),
+        wrap((seed[5] + drift * cos) / FLOW.cells)
+      );
+    }
+  }
+
   function wander(channel, t) {
     let sum = 0;
     for (let k = 0; k < channel.rates.length; k += 1) sum += channel.weights[k] * Math.sin(t * channel.rates[k] + channel.phases[k]);
@@ -1958,6 +2174,7 @@ if (renderer) {
     updateMorph(dt);
     updateAnchored(dt);
     updatePassage(dt);
+    updateFlow(dt);
     updateLayers(dt);
     updateText(dt);
   }
