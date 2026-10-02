@@ -126,14 +126,19 @@ const EDGE = {
 // broad (carry), so a contour disagrees with itself locally. wave and reach are in units of the field's own mass size:
 // wave is the length of a feature, reach the furthest a point is displaced, and their ratio keeps every stretch far
 // short of folding. period is how long, in seconds, one feature takes to become another; wander is how long the
-// sampling takes to move one feature across, so the deformation does not revisit itself on a beat. Anchored fields
-// deform at a share of the passing fields' reach and pace. cells and size are the noise volume's lattice and texels.
+// sampling takes to move one feature across, so the deformation does not revisit itself on a beat. The broad
+// displacement carries the change: strong enough that a mass visibly becomes another version of itself over a minute,
+// on a long wave and a slow period so it stays calm; the fine one stays slight, so it reads as reorganisation rather
+// than animated texture. Anchored fields deform at a share of the passing fields' reach and pace. Soft fields (veils
+// and the faint wash) take a share of the reach, since a broad wash displaced as far as a stain reads as the whole
+// field sliding. cells and size are the noise volume's lattice and texels.
 const FLOW = {
-  broad: { wave: 2.4, reach: 0.18, period: 46 },
-  fine: { wave: 0.55, reach: 0.035, period: 27 },
+  broad: { wave: 3, reach: 0.45, period: 62 },
+  fine: { wave: 0.55, reach: 0.03, period: 30 },
   carry: 0.6,
   wander: 330,
-  anchored: { reach: 0.8, pace: 0.55 },
+  anchored: { reach: 0.8, pace: 0.7 },
+  soft: 0.7,
   reduced: { reach: 0.6, pace: 0.5 },
   cells: 8,
   size: 64
@@ -1158,11 +1163,12 @@ if (renderer) {
     const [, , rx, ry] = LAYERS.find((layer) => layer.depth === spec.depth).masses[0];
     const size = clamp(Math.sqrt(rx * NOMINAL_ASPECT * ry), 0.1, 0.45);
     const share = ANCHOR_LAYERS.includes(spec.depth) ? FLOW.anchored : { reach: 1, pace: 1 };
+    const soft = spec.kind === "veil" || spec.opacity < 0.2 ? FLOW.soft : 1;
     const wave = lerp(0.9, 1.15, random());
     const heading = random() * TAU;
 
     return {
-      reach: [FLOW.broad.reach * size * share.reach, FLOW.fine.reach * size * share.reach],
+      reach: [FLOW.broad.reach * size * share.reach * soft, FLOW.fine.reach * size * share.reach * soft],
       freq: [1 / (FLOW.broad.wave * size * wave * FLOW.cells), 1 / (FLOW.fine.wave * size * wave * FLOW.cells)],
       pace: share.pace * lerp(0.85, 1.2, random()),
       seed: Array.from({ length: 6 }, () => random() * FLOW.cells),
