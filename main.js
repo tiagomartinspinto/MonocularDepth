@@ -131,7 +131,12 @@ const EDGE = {
 // on a long wave and a slow period so it stays calm; the fine one stays slight, so it reads as reorganisation rather
 // than animated texture. Anchored fields deform at a share of the passing fields' reach and pace. Soft fields (veils
 // and the faint wash) take a share of the reach, since a broad wash displaced as far as a stain reads as the whole
-// field sliding. cells and size are the noise volume's lattice and texels.
+// field sliding. Shape and grain are deformed apart (grain): what is broader than scale (in units of the field's mass
+// size) is the field's shape and takes the whole deformation; the finer grain inside it takes only follow of it, so a
+// mass reshapes without its grain being combed into streaks. Where the shape has moved off what lay there, at an
+// advancing or retreating edge, the grain goes with the shape, so contours keep their own broken structure and no
+// ghost of the old outline remains; edge is the range of agreement between the moved and unmoved shape (their ratio)
+// over which a place passes from edge to interior. cells and size are the noise volume's lattice and texels.
 const FLOW = {
   broad: { wave: 3, reach: 0.45, period: 62 },
   fine: { wave: 0.55, reach: 0.03, period: 30 },
@@ -139,6 +144,7 @@ const FLOW = {
   wander: 330,
   anchored: { reach: 0.8, pace: 0.7 },
   soft: 0.7,
+  grain: { scale: 0.45, follow: 0.4, edge: [0.15, 0.6] },
   reduced: { reach: 0.6, pace: 0.5 },
   cells: 8,
   size: 64
@@ -1127,8 +1133,8 @@ if (renderer) {
     projectedAlign: NaN
   };
 
-  // Every residue field reads its map through this in place of the plain lookup: where on its map the material at this
-  // fragment now is. Displacements are measured on the material (fieldFrame maps the map onto its plane in view
+  // Every residue field reads its map through this in place of the plain lookup: how far, on its map, the material at
+  // this fragment has moved. Displacements are measured on the material (fieldFrame maps the map onto its plane in view
   // half-heights), so the deformation travels with a passing field instead of the field passing through it. Fragments
   // the deformation cannot reach skip it.
   const FLOW_GLSL = [
@@ -1137,14 +1143,37 @@ if (renderer) {
     "uniform vec4 flowShape;",
     "uniform vec4 flowTime;",
     "uniform vec4 flowOffset;",
-    "vec2 flowUv( vec2 uv ) {",
+    "uniform vec2 flowGrain;",
+    "vec2 flowShift( vec2 uv ) {",
     "\tvec2 margin = vec2( flowShape.x + flowShape.z ) / fieldFrame.xy;",
-    "\tif ( any( lessThan( uv, -margin ) ) || any( greaterThan( uv, 1.0 + margin ) ) ) return uv;",
+    "\tif ( any( lessThan( uv, -margin ) ) || any( greaterThan( uv, 1.0 + margin ) ) ) return vec2( 0.0 );",
     "\tvec2 p = uv * fieldFrame.xy + fieldFrame.zw;",
     "\tvec2 broad = textureLod( flowField, vec3( p * flowShape.y + flowOffset.xy, flowTime.x ), 0.0 ).xy * 2.0 - 1.0;",
     "\tvec2 carried = p + broad * flowShape.x * flowTime.z;",
     "\tvec2 fine = textureLod( flowField, vec3( carried * flowShape.w + flowOffset.zw, flowTime.y ), 0.0 ).zw * 2.0 - 1.0;",
-    "\treturn uv + ( broad * flowShape.x + fine * flowShape.z ) / fieldFrame.xy;",
+    "\treturn ( broad * flowShape.x + fine * flowShape.z ) / fieldFrame.xy;",
+    "}",
+    ""
+  ].join("\n");
+  // The field read apart by scale (after the alpha map is declared). Its shape, the map's own low-pass at flowGrain.x,
+  // takes the whole deformation; its grain, the remainder, is read where the material has moved only flowGrain.y as far.
+  // The two shapes are compared: where they agree (inside a mass) the gently moved grain is kept, so the interior is not
+  // combed; where they disagree (an edge advancing or retreating) the grain is taken with the shape instead, so the
+  // contour keeps its own structure and no ghost of the old one is left. Undeformed, this returns the map exactly.
+  const RESIDUE_GLSL = [
+    "vec4 readResidue( vec2 uv ) {",
+    "\tvec2 shift = flowShift( uv );",
+    "\tvec4 residue = texture2D( alphaMap, uv );",
+    "\tif ( shift.x != 0.0 || shift.y != 0.0 ) {",
+    "\t\tvec2 shapeUv = uv + shift;",
+    "\t\tvec2 grainUv = uv + shift * flowGrain.y;",
+    "\t\tvec4 shape = textureLod( alphaMap, shapeUv, flowGrain.x );",
+    "\t\tvec4 under = textureLod( alphaMap, grainUv, flowGrain.x );",
+    `\t\tvec4 agree = smoothstep( vec4( ${FLOW.grain.edge[0].toFixed(3)} ), vec4( ${FLOW.grain.edge[1].toFixed(3)} ), min( shape, under ) / max( max( shape, under ), vec4( 0.004 ) ) );`,
+    "\t\tvec4 grain = mix( texture2D( alphaMap, shapeUv ) - shape, texture2D( alphaMap, grainUv ) - under, agree );",
+    "\t\tresidue = clamp( shape + grain, 0.0, 1.0 );",
+    "\t}",
+    "\treturn residue;",
     "}",
     ""
   ].join("\n");
@@ -1168,6 +1197,7 @@ if (renderer) {
     const heading = random() * TAU;
 
     return {
+      size,
       reach: [FLOW.broad.reach * size * share.reach * soft, FLOW.fine.reach * size * share.reach * soft],
       freq: [1 / (FLOW.broad.wave * size * wave * FLOW.cells), 1 / (FLOW.fine.wave * size * wave * FLOW.cells)],
       pace: share.pace * lerp(0.85, 1.2, random()),
@@ -1178,22 +1208,25 @@ if (renderer) {
         fieldFrame: { value: new Vector4(1, 1, 0, 0) },
         flowShape: { value: new Vector4() },
         flowTime: { value: new Vector4() },
-        flowOffset: { value: new Vector4() }
+        flowOffset: { value: new Vector4() },
+        flowGrain: { value: new Vector2(0, FLOW.grain.follow) }
       }
     };
   }
 
-  // Replaces a field's alpha-map lookup with one read through its flow; `lines` read the map at fieldUv.
+  // Replaces a field's alpha-map lookup with one read through its flow; `lines` use the read as `residue`.
   function readField(material, flow, uniforms, declarations, lines, key) {
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, flow.uniforms, uniforms);
       shader.fragmentShader =
         FLOW_GLSL +
         declarations +
-        shader.fragmentShader.replace(
-          "#include <alphamap_fragment>",
-          ["#ifdef USE_ALPHAMAP", "\tvec2 fieldUv = flowUv( vAlphaMapUv );", ...lines, "#endif"].join("\n")
-        );
+        shader.fragmentShader
+          .replace("#include <alphamap_pars_fragment>", "#include <alphamap_pars_fragment>\n#ifdef USE_ALPHAMAP\n" + RESIDUE_GLSL + "#endif")
+          .replace(
+            "#include <alphamap_fragment>",
+            ["#ifdef USE_ALPHAMAP", "\tvec4 residue = readResidue( vAlphaMapUv );", ...lines, "#endif"].join("\n")
+          );
     };
     material.customProgramCacheKey = () => key;
   }
@@ -1229,7 +1262,7 @@ if (renderer) {
         uniforms,
         "uniform vec3 stateFrom;\nuniform vec3 stateTo;\nuniform float stateProgress;\nuniform float stateAmount;\n",
         [
-          "\tvec4 states = texture2D( alphaMap, fieldUv );",
+          "\tvec4 states = residue;",
           `\tfloat reached = smoothstep( states.a - ${MORPH.front.toFixed(3)}, states.a + ${MORPH.front.toFixed(3)}, stateProgress * ${(1 + 2 * MORPH.front).toFixed(3)} - ${MORPH.front.toFixed(3)} );`,
           "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
           "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );"
@@ -1262,7 +1295,7 @@ if (renderer) {
         uniforms,
         "uniform vec2 statePhase;\nuniform float stateAmount;\n",
         [
-          "\tvec4 states = texture2D( alphaMap, fieldUv );",
+          "\tvec4 states = residue;",
           `\tfloat towardR = 0.5 - 0.5 * cos( 6.2831853 * ( states.a * ${ANCHOR_WAVES[0].toFixed(3)} + statePhase.x ) );`,
           `\tfloat towardB = 0.66 * ( 0.5 - 0.5 * cos( 6.2831853 * ( states.a * ${ANCHOR_WAVES[1].toFixed(3)} - statePhase.y ) ) );`,
           "\tfloat evolved = mix( mix( states.g, states.r, towardR ), states.b, towardB );",
@@ -1281,7 +1314,7 @@ if (renderer) {
         steady: 1
       };
     } else {
-      readField(material, flow, {}, "", ["\tdiffuseColor.a *= texture2D( alphaMap, fieldUv ).g;"], "residue-flow");
+      readField(material, flow, {}, "", ["\tdiffuseColor.a *= residue.g;"], "residue-flow");
     }
 
     // Each anchored field wanders on its own axis, near the passage direction, with its own sense and beats.
@@ -1517,6 +1550,10 @@ if (renderer) {
         (-value.offset.x * spanX - 0.5) * widthScale,
         (-value.offset.y * spanY - 0.5) * 2 * COVER
       );
+      // The mip level whose blur matches the grain scale of this field, from the size of one of its texels.
+      const texel = (spanY * 2 * COVER) / value.image.height;
+      const levels = Math.floor(Math.log2(Math.max(value.image.width, value.image.height)));
+      layer.flow.uniforms.flowGrain.value.x = clamp(Math.log2((FLOW.grain.scale * layer.flow.size) / texel), 0, levels);
       const previous = layer.material.alphaMap;
       layer.material.alphaMap = value;
       layer.material.needsUpdate = !previous;
