@@ -50,7 +50,9 @@ const RECALIBRATION = {
 // reweigh reshape it in place. edge and density are how far, in noise cells, an alternate draws its edge irregularity and
 // its internal density from. bias moves the whole field's threshold; open moves it unevenly, in broad lobes, so an
 // opening forms in one part of a field while another part closes. front is the width of the band in which a change
-// passes through the field.
+// passes through the field. It is wide and the transitions long, and a transition advances at an even pace, so each
+// part of a field takes roughly as long to change as the viscous flow takes to reshape it: a field never visibly
+// switches from one prepared state to the next.
 const MORPH = {
   amount: 1,
   shift: 0.3,
@@ -61,8 +63,8 @@ const MORPH = {
   density: 1.3,
   bias: 0.09,
   open: 0.18,
-  front: 0.3,
-  transition: [12, 30],
+  front: 0.6,
+  transition: [40, 75],
   hold: [8, 30],
   concurrent: 2,
   reduced: 0.4
@@ -2020,8 +2022,9 @@ if (renderer) {
           morph.wait = morph.elapsed + rand(3, 8);
         }
       } else {
+        // Even pace: each part of the field already eases in and out of its own change (see front).
         const u = Math.min(1, morph.elapsed / morph.duration);
-        uniforms.stateProgress.value = smoothstep(0, 1, u);
+        uniforms.stateProgress.value = u;
         if (u >= 1) {
           morph.state = morph.next;
           uniforms.stateFrom.value.fromArray(STATE_CHANNELS[morph.state]);
