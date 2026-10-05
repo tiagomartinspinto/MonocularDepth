@@ -1,8 +1,8 @@
-# Monocular Depth
+# Schopenhauer Was Not Right
 
 ## Title
 
-Monocular Depth
+Schopenhauer Was Not Right
 
 ## Medium
 
@@ -16,11 +16,11 @@ Browser-based artwork, HTML/CSS/JavaScript and WebGL (Three.js)
 
 A flat image tries to become spatial.
 
-Drawing from the artist's experience of amblyopia and reduced stereoscopic vision, Monocular Depth builds depth through motion, scale, opacity, occlusion, and unstable perspective. The work treats adaptation not as a lack, but as a perceptual method.
+Drawing from the artist's experience of amblyopia and reduced stereoscopic vision, *Schopenhauer Was Not Right* builds depth through motion, scale, opacity, occlusion, and unstable perspective. The work treats adaptation not as a lack, but as a perceptual method.
 
 ## Longer Curatorial Note
 
-Monocular Depth is a browser-based artwork about constructing space when stereoscopic depth is unreliable. Rather than simulating a medical condition, the piece creates a perceptual field where depth is assembled through indirect cues: movement, overlap, scale, opacity, parallax, and broken perspective.
+*Schopenhauer Was Not Right* is a browser-based artwork about constructing space when stereoscopic depth is unreliable. Rather than simulating a medical condition, the piece creates a perceptual field where depth is assembled through indirect cues: movement, overlap, scale, opacity, parallax, and broken perspective.
 
 The work is shaped by the artist's lived experience of amblyopia and reduced stereoscopic vision. It reflects a way of moving through the world where depth is learned through adaptation, repetition, timing, memory, and bodily correction.
 

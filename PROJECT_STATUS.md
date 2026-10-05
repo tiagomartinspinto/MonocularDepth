@@ -1,5 +1,8 @@
 # Project Status
 
+- Public artwork title: *Schopenhauer Was Not Right*.
+- Repository and codebase name remains `MonocularDepth`.
+
 ## Passing-Field Experiment
 
 Branch: `passing-clouds-test` (not merged, not pushed), from `main` at `exhibition-candidate-1`.

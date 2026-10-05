@@ -1,6 +1,8 @@
-# Monocular Depth
+# Schopenhauer Was Not Right
 
-Monocular Depth is a browser-based artwork about constructing depth without relying on stereoscopic vision.
+Repository: `MonocularDepth`
+
+*Schopenhauer Was Not Right* is a browser-based artwork about constructing depth without relying on stereoscopic vision.
 
 A flat image tries to become spatial.
 
