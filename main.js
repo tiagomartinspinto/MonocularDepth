@@ -109,6 +109,31 @@ const AURA = {
   periods: [[260, 420], [430, 700], [150, 240]],
   flat: 0.3
 };
+// Deposit sites: the darkest residue is not one body. The ink is laid down as several overlapping deposits of the same
+// material at the same depth, sharing one flow and one drift, so where they meet they read as one field. Each slowly
+// gathers (spreads, thickens, its threshold rising) or disperses (shrinks and opens into separate remnants, its
+// threshold falling), part by part in the field's own order rather than as a fade, on unrelated beats of minutes. They
+// lean against one another only loosely (couple: a deposit tends to gather while the others disperse), so darkness is
+// neither conserved nor handed on: a concentration forms in one place, breaks up, survives as fragments, and forms
+// again from another grouping. As laid down, a deposit is only moderately dense (opacity); it becomes the darkest thing
+// in the work only by gathering, never by where it lies. Deposits rest toward dispersal (rest), so most of the time
+// they survive as broken remnants and only one, sometimes two, draws together into a concentration; their internal
+// density is uneven (inner), so even a gathered deposit reads as deposit rather than a solid body. While depth is flat
+// it goes on at flat of its pace, from wherever it is. gathered and dispersed are the two states a deposit moves
+// toward; gain is how far its beats carry it; periods are in seconds; front is the width of the band in which a change
+// passes through a deposit.
+const SITES = {
+  opacity: 1,
+  gathered: { swell: 1.3, weight: 1.6, bias: 0.22, open: 0.04, warp: 0.35, density: 0.8 },
+  dispersed: { swell: 0.95, weight: 0.62, bias: -0.2, open: 0.55, warp: 1.3, density: 1.6 },
+  periods: [[170, 260], [290, 420], [480, 720]],
+  couple: 0.6,
+  gain: 1.6,
+  rest: 0.3,
+  inner: 0.42,
+  front: 0.5,
+  flat: 0.6
+};
 // Edge language shared by all residue, so no field reads as a painted stroke laid over the others: a contour may hold
 // for a stretch, then dissolve. feather widens the outer threshold of the crisper fields where their masses thin out,
 // by an amount that wanders along the contour between firm (a share of it) and full, so a thin outer mass reads as
@@ -207,7 +232,11 @@ const LAYERS = [
   { depth: 9, kind: "stain", tone: "graphite", opacity: 0.66, tilt: -0.6, edge: 0.14, cut: [-0.34, 0.94, -0.75],
     masses: [[0.6, -0.55, 0.13, 0.14, 1, -0.6]] },
   { depth: 8, kind: "stain", tone: "ink", opacity: 1, inner: 0.3, erase: 0.05, tilt: 0.3, edge: 0.16, cut: [0.82, -0.57, -0.33],
-    masses: [[-0.2, 0.22, 0.19, 0.21, 1, 0.5]] },
+    masses: [[-0.2, 0.22, 0.135, 0.15, 1, 0.5]],
+    // Further deposits of the same ink (see SITES): right and lower, lower left, and high. None sits at the centre of the
+    // frame, where the passing masses cross and every deposit's fringe would meet, and all are of about one size, so no
+    // place or deposit is the darkest by default.
+    sites: [[[0.34, -0.12, 0.13, 0.145, 1, 0.2]], [[-0.5, -0.18, 0.13, 0.145, 1, -0.3]], [[0.16, 0.42, 0.13, 0.145, 1, 0.8]]] },
   { depth: 7, kind: "veil", opacity: 0.7, cut: [0.8, 0.6, -0.03],
     masses: [[-0.36, 0.4, 0.34, 0.36, 1]] },
   { depth: 6, kind: "stain", tone: "graphite", opacity: 0.62, tilt: 1.1, stretch: 0.8, edge: 0.4, cut: [-0.94, 0.34, -0.62],
@@ -805,6 +834,22 @@ function residueStates(spec, amount, character = MORPH) {
   return states;
 }
 
+// A deposit's states: as composed, gathered and dispersed (see SITES). Not drawn at random: what changes is how much of
+// the deposit holds together, while its masses stay where they were laid down.
+function siteStates(spec) {
+  const toward = (character) => ({
+    masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0]) => [
+      mx, my, rx * character.swell, ry * character.swell, weight * character.weight, angle
+    ]),
+    warp: [character.warp, -0.7 * character.warp],
+    density: [character.density, -0.6 * character.density],
+    bias: character.bias,
+    open: character.open
+  });
+
+  return [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }, toward(SITES.gathered), toward(SITES.dispersed)];
+}
+
 // An anchored field's total alpha, as its two changes read it, depends on where both changes stand. These sums over its
 // map (order-weighted moments of the differences between its states) give that total for any two phases at once, so the
 // field's overall strength can be held while its material moves (see steadiness).
@@ -1216,6 +1261,35 @@ if (renderer) {
     };
   }
 
+  // Three.js draws on Math.random to name each object it makes. A further deposit's objects (its mesh, material and
+  // maps) are named from its own seeded source instead, so adding deposits leaves every chance the work takes, above
+  // all the sequence of its thought, exactly where it was.
+  function withChances(random, make) {
+    const shared = Math.random;
+    Math.random = random;
+    try {
+      return make();
+    } finally {
+      Math.random = shared;
+    }
+  }
+
+  // A further deposit of a field moves with that field's own flow: the same displacement everywhere on their shared
+  // plane, so where deposits overlap their material stays one. Only its uniforms are its own.
+  function sharedFlow(flow) {
+    return {
+      ...flow,
+      uniforms: {
+        flowField,
+        fieldFrame: { value: new Vector4(1, 1, 0, 0) },
+        flowShape: { value: new Vector4() },
+        flowTime: { value: new Vector4() },
+        flowOffset: { value: new Vector4() },
+        flowGrain: { value: new Vector2(0, FLOW.grain.follow) }
+      }
+    };
+  }
+
   // Replaces a field's alpha-map lookup with one read through its flow; `lines` use the read as `residue`.
   function readField(material, flow, uniforms, declarations, lines, key) {
     material.onBeforeCompile = (shader) => {
@@ -1233,7 +1307,9 @@ if (renderer) {
     material.customProgramCacheKey = () => key;
   }
 
-  function createLayer(spec, index) {
+  // `share` is the field a further deposit belongs to: it takes that field's flow, drift and wandering, and draws its
+  // own beats from a seeded source, so nothing else in the work draws differently because it exists.
+  function createLayer(spec, index, share = null) {
     const color = new Color(spec.kind === "veil" ? TONE.field : TONE[spec.tone]);
     // Atmospheric fade is applied per layer rather than by scene fog, so it can be compressed.
     const material = new MeshBasicMaterial({
@@ -1249,9 +1325,48 @@ if (renderer) {
 
     // An evolving field reads its map as one of its three stored states, or partway from one to another: each part of
     // the field changes when the transition reaches it in the stored order. Only this read of the map is replaced.
-    const flow = createFlow(spec);
+    const flow = share ? sharedFlow(share.flow) : createFlow(spec);
     let morph = null;
-    if (MORPH_LAYERS.includes(spec.depth)) {
+    if (spec.site !== undefined) {
+      // A deposit reads its map as composed, or partway toward gathered or dispersed (see updateSites). The first
+      // deposit draws exactly what an anchored field draws here, in the same order, so the work's sequence is unchanged.
+      const random = share ? mulberry32(Math.round(spec.depth * 331) + 17 * spec.site) : null;
+      const draw = (low, high) => (random ? lerp(low, high, random()) : rand(low, high));
+      const uniforms = {
+        stateFrom: { value: new Vector3(0, 1, 0) },
+        stateTo: { value: new Vector3(0, 1, 0) },
+        stateProgress: { value: 0 },
+        stateAmount: { value: 1 }
+      };
+      readField(
+        material,
+        flow,
+        uniforms,
+        "uniform vec3 stateFrom;\nuniform vec3 stateTo;\nuniform float stateProgress;\nuniform float stateAmount;\n",
+        [
+          "\tvec4 states = residue;",
+          `\tfloat reached = smoothstep( states.a - ${SITES.front.toFixed(3)}, states.a + ${SITES.front.toFixed(3)}, stateProgress * ${(1 + 2 * SITES.front).toFixed(3)} - ${SITES.front.toFixed(3)} );`,
+          "\tfloat evolved = mix( dot( states.rgb, stateFrom ), dot( states.rgb, stateTo ), reached );",
+          "\tdiffuseColor.a *= mix( states.g, evolved, stateAmount );"
+        ],
+        "residue-site"
+      );
+      const phases = [draw(0, TAU), draw(0, TAU)];
+      const rates = [TAU / draw(...SITES.periods[0]), TAU / draw(...SITES.periods[1])];
+      const third = [TAU / draw(...SITES.periods[2]), draw(0, TAU)];
+      const weights = [draw(0.45, 0.6), draw(0.25, 0.4)];
+      morph = {
+        states: siteStates(spec),
+        uniforms,
+        anchored: false,
+        site: true,
+        rates: [rates[0], rates[1], third[0]],
+        phases: [phases[0], phases[1], third[1]],
+        weights: [weights[0], weights[1], Math.max(0.05, 1 - weights[0] - weights[1])],
+        raw: 0,
+        toward: 0
+      };
+    } else if (MORPH_LAYERS.includes(spec.depth)) {
       const uniforms = {
         stateFrom: { value: new Vector3(0, 1, 0) },
         stateTo: { value: new Vector3(0, 1, 0) },
@@ -1319,9 +1434,10 @@ if (renderer) {
       readField(material, flow, {}, "", ["\tdiffuseColor.a *= residue.g;"], "residue-flow");
     }
 
-    // Each anchored field wanders on its own axis, near the passage direction, with its own sense and beats.
-    let aura = null;
-    if (ANCHOR_LAYERS.includes(spec.depth)) {
+    // Each anchored field wanders on its own axis, near the passage direction, with its own sense and beats; further
+    // deposits wander with the field they belong to.
+    let aura = share ? share.aura : null;
+    if (!share && ANCHOR_LAYERS.includes(spec.depth)) {
       const channel = () => {
         const weights = [rand(0.45, 0.6), rand(0.25, 0.35), rand(0.1, 0.2)];
         const total = weights[0] + weights[1] + weights[2];
@@ -1351,14 +1467,15 @@ if (renderer) {
       haze: smoothstep(FOG_NEAR, FOG_FAR, spec.depth),
       appear: 0,
       seed: index * 2.39 + 0.7,
-      driftRate: rand(0.8, 1.25),
+      driftRate: share ? share.driftRate : rand(0.8, 1.25),
       morph,
       aura,
       flow,
       stream: null,
       origin: 0,
       placing: false,
-      deferred: false
+      deferred: false,
+      chances: null
     };
   }
 
@@ -1433,6 +1550,17 @@ if (renderer) {
       order: ANCHOR_LAYERS.includes(source.depth) ? ANCHOR.order : 1,
       balance: ANCHOR_LAYERS.includes(source.depth)
     };
+    // A field laid down as several deposits: the first as composed (with its cut), the others beside it, one material.
+    if (source.sites) {
+      const first = createLayer({ ...base, opacity: SITES.opacity, inner: SITES.inner, site: 0, balance: false }, index);
+      const others = source.sites.map((masses, n) => {
+        const chances = mulberry32(Math.round(source.depth * 577) + 31 * (n + 1));
+        const layer = withChances(chances, () => createLayer({ ...base, opacity: SITES.opacity, inner: SITES.inner, masses, cut: null, site: n + 1, balance: false }, index, first));
+        layer.chances = chances;
+        return layer;
+      });
+      return [first, ...others];
+    }
     if (!PASSAGE_LAYERS.includes(source.depth)) return [createLayer(base, index)];
 
     // The first tile carries the field as composed, so the work opens on its composition; the next waits upstream.
@@ -1452,8 +1580,10 @@ if (renderer) {
   // Beyond this, in view half-widths along the passage, a tile's upstream end has left the frame with any parallax.
   const PASSAGE_EXIT = 1.7;
   let passageStrength = state.reducedMotion ? PASSAGE.reduced : 1;
-  const evolving = layers.filter((layer) => layer.morph && !layer.morph.anchored);
+  const evolving = layers.filter((layer) => layer.morph && !layer.morph.anchored && !layer.morph.site);
   const unsettled = layers.filter((layer) => layer.morph && layer.morph.anchored);
+  const deposits = layers.filter((layer) => layer.morph && layer.morph.site);
+  let siteTime = 0;
   let auraTime = rand(0, 600);
   // Channel of each stored state: composed (G), first alternate (R), second alternate (B).
   const STATE_CHANNELS = [[0, 1, 0], [1, 0, 0], [0, 0, 1]];
@@ -1531,7 +1661,9 @@ if (renderer) {
       const layer = state.buildQueue[0];
       if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect, layer.morph ? layer.morph.states : undefined);
 
-      const { done, value } = state.buildJob.next();
+      // A further deposit's map is named from its own source too (see withChances).
+      const job = state.buildJob;
+      const { done, value } = layer.chances ? withChances(layer.chances, () => job.next()) : job.next();
       if (!done) continue;
 
       state.buildQueue.shift();
@@ -2117,6 +2249,30 @@ if (renderer) {
     }
   }
 
+  // Each deposit leans toward gathering or dispersing by its own slow beats, less the common lean of all of them, so
+  // they tend to move against one another without any total being kept. Passing through composed, a deposit turns from
+  // one state toward the other where its progress is nil, so the change never jumps. Nothing here resets with phases.
+  function updateSites(dt) {
+    siteTime += dt * (state.reducedMotion ? 0.5 : 1) * lerp(1, SITES.flat, smoothstep(0.5, 0.9, state.params.align));
+    let common = 0;
+    for (let index = 0; index < deposits.length; index += 1) {
+      const morph = deposits[index].morph;
+      morph.raw = wander(morph, siteTime);
+      common += morph.raw / deposits.length;
+    }
+    for (let index = 0; index < deposits.length; index += 1) {
+      const morph = deposits[index].morph;
+      const lean = clamp(SITES.gain * (morph.raw - SITES.couple * common) - SITES.rest, -1, 1);
+      const toward = lean >= 0 ? 1 : 2;
+      if (toward !== morph.toward) {
+        morph.toward = toward;
+        morph.uniforms.stateTo.value.fromArray(STATE_CHANNELS[toward]);
+      }
+      morph.uniforms.stateProgress.value = Math.abs(lean);
+      morph.uniforms.stateAmount.value = morphStrength;
+    }
+  }
+
   function wander(channel, t) {
     let sum = 0;
     for (let k = 0; k < channel.rates.length; k += 1) sum += channel.weights[k] * Math.sin(t * channel.rates[k] + channel.phases[k]);
@@ -2221,6 +2377,7 @@ if (renderer) {
     updateAnchored(dt);
     updatePassage(dt);
     updateFlow(dt);
+    updateSites(dt);
     updateLayers(dt);
     updateText(dt);
   }
