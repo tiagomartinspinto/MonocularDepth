@@ -115,11 +115,13 @@ const AURA = {
 // threshold falling), part by part in the field's own order rather than as a fade, on unrelated beats of minutes. They
 // lean against one another only loosely (couple: a deposit tends to gather while the others disperse), so darkness is
 // neither conserved nor handed on: a concentration forms in one place, breaks up, survives as fragments, and forms
-// again from another grouping. As laid down, a deposit is only moderately dense (opacity); it becomes the darkest thing
-// in the work only by gathering, never by where it lies. Deposits rest toward dispersal (rest), so most of the time
-// they survive as broken remnants and only one, sometimes two, draws together into a concentration; their internal
-// density is uneven (inner), so even a gathered deposit reads as deposit rather than a solid body. While depth is flat
-// it goes on at flat of its pace, from wherever it is. gathered and dispersed are the two states a deposit moves
+// again from another grouping. The deposits are not alike (see their entries in LAYERS): each has its own size, opacity
+// and internal density as laid down, and its own way of gathering and of coming apart, given as changes to the
+// gathered and dispersed states below (opacity and inner here are only the defaults). A deposit becomes the darkest
+// thing in the work only by gathering, never by where it lies. Deposits rest toward dispersal (rest), so most of the
+// time they survive as broken remnants and only one, sometimes two, draws together into a concentration; their
+// internal density is uneven (inner), so even a gathered deposit reads as deposit rather than a solid body. While depth
+// is flat it goes on at flat of its pace, from wherever it is. gathered and dispersed are the two states a deposit moves
 // toward; gain is how far its beats carry it; periods are in seconds; front is the width of the band in which a change
 // passes through a deposit.
 const SITES = {
@@ -231,12 +233,30 @@ const LAYERS = [
     masses: [[0.45, 0.1, 0.4, 0.4, 1], [-0.55, 0.35, 0.3, 0.34, 0.7]] },
   { depth: 9, kind: "stain", tone: "graphite", opacity: 0.66, tilt: -0.6, edge: 0.14, cut: [-0.34, 0.94, -0.75],
     masses: [[0.6, -0.55, 0.13, 0.14, 1, -0.6]] },
-  { depth: 8, kind: "stain", tone: "ink", opacity: 1, inner: 0.3, erase: 0.05, tilt: 0.3, edge: 0.16, cut: [0.82, -0.57, -0.33],
+  { depth: 8, kind: "stain", tone: "ink", opacity: 1, inner: 0.3, erase: 0.05, tilt: 0.3, edge: 0.16,
+    // The ink's reference mass: it sets the scale of the field's flow, shared by every deposit below.
     masses: [[-0.2, 0.22, 0.135, 0.15, 1, 0.5]],
-    // Further deposits of the same ink (see SITES): right and lower, lower left, and high. None sits at the centre of the
-    // frame, where the passing masses cross and every deposit's fringe would meet, and all are of about one size, so no
-    // place or deposit is the darkest by default.
-    sites: [[[0.34, -0.12, 0.13, 0.145, 1, 0.2]], [[-0.5, -0.18, 0.13, 0.145, 1, -0.3]], [[0.16, 0.42, 0.13, 0.145, 1, 0.8]]] },
+    // The ink is laid down as four deposits of one material (see SITES) that differ in size, weight and in how each
+    // comes apart, so that the number of forms in view cannot be read off. Opacity and inner are the deposit's own; gathered
+    // and dispersed change only what differs from SITES. Territories leave the middle of the frame clear: a small dense
+    // deposit low and right of it, a broad weak one low on the left, a loose chain of unequal lobes high up, and a long
+    // thin one down the right that can reach the chain's end or the small deposit.
+    deposits: [
+      { masses: [[0.2, -0.46, 0.085, 0.09, 0.8, 0.5]], opacity: 0.92, inner: 0.4,
+        gathered: { swell: 1.35, weight: 1.3, bias: 0.16, open: 0.1, warp: 0.6, density: 0.9 },
+        dispersed: { swell: 0.65, weight: 0.4, bias: -0.28, open: 0.55, warp: 1, density: 1.3 } },
+      { masses: [[-0.62, -0.26, 0.24, 0.17, 0.6, -0.25], [-0.88, -0.08, 0.1, 0.08, 0.4, 0.5]], opacity: 0.72, inner: 0.6,
+        gathered: { swell: 1.12, weight: 1.45, bias: 0.15, open: 0.1, warp: 0.5, density: 0.5 },
+        dispersed: { swell: 1, weight: 0.5, bias: -0.16, open: 0.85, warp: 1.6, density: 1.3, spread: 1.1 } },
+      { masses: [[-0.14, 0.55, 0.13, 0.07, 0.9, 0.2], [0.05, 0.4, 0.06, 0.05, 0.65, -0.4], [0.3, 0.52, 0.085, 0.045, 0.55, 0.1], [0.2, 0.62, 0.035, 0.03, 0.45]],
+        opacity: 0.85, inner: 0.5,
+        gathered: { swell: 1.4, weight: 1.5, bias: 0.2, open: 0.05, warp: 0.4, density: 0.8, spread: 0.85 },
+        dispersed: { swell: 0.8, weight: [0.8, 0.45, 0.6, 0.3], bias: -0.22, open: 0.9, warp: 1.5, density: 1.8, spread: 1.3 } },
+      { masses: [[0.62, -0.04, 0.2, 0.075, 0.8, 1.25], [0.72, 0.24, 0.09, 0.05, 0.55, 0.9], [0.92, -0.3, 0.05, 0.04, 0.45]],
+        opacity: 0.8, inner: 0.55,
+        gathered: { swell: 1.3, weight: 1.6, bias: 0.2, open: 0, warp: 0.8, density: 1, spread: 0.9 },
+        dispersed: { swell: 0.65, weight: 0.5, bias: -0.3, open: 0.35, warp: 1.2, density: 1.4, spread: 1.05 } }
+    ] },
   { depth: 7, kind: "veil", opacity: 0.7, cut: [0.8, 0.6, -0.03],
     masses: [[-0.36, 0.4, 0.34, 0.36, 1]] },
   { depth: 6, kind: "stain", tone: "graphite", opacity: 0.62, tilt: 1.1, stretch: 0.8, edge: 0.4, cut: [-0.94, 0.34, -0.62],
@@ -837,9 +857,19 @@ function residueStates(spec, amount, character = MORPH) {
 // A deposit's states: as composed, gathered and dispersed (see SITES). Not drawn at random: what changes is how much of
 // the deposit holds together, while its masses stay where they were laid down.
 function siteStates(spec) {
+  // swell and weight may be given for each mass, and spread moves the masses toward or away from the deposit's middle,
+  // so a deposit made of several masses can draw together or come apart, and unevenly.
+  const each = (value, index) => (Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value);
+  const centreX = spec.masses.reduce((sum, mass) => sum + mass[0], 0) / spec.masses.length;
+  const centreY = spec.masses.reduce((sum, mass) => sum + mass[1], 0) / spec.masses.length;
   const toward = (character) => ({
-    masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0]) => [
-      mx, my, rx * character.swell, ry * character.swell, weight * character.weight, angle
+    masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0], index) => [
+      centreX + (mx - centreX) * (character.spread ?? 1),
+      centreY + (my - centreY) * (character.spread ?? 1),
+      rx * each(character.swell, index),
+      ry * each(character.swell, index),
+      weight * each(character.weight, index),
+      angle
     ]),
     warp: [character.warp, -0.7 * character.warp],
     density: [character.density, -0.6 * character.density],
@@ -847,7 +877,7 @@ function siteStates(spec) {
     open: character.open
   });
 
-  return [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }, toward(SITES.gathered), toward(SITES.dispersed)];
+  return [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }, toward(spec.gathered), toward(spec.dispersed)];
 }
 
 // An anchored field's total alpha, as its two changes read it, depends on where both changes stand. These sums over its
@@ -1550,12 +1580,26 @@ if (renderer) {
       order: ANCHOR_LAYERS.includes(source.depth) ? ANCHOR.order : 1,
       balance: ANCHOR_LAYERS.includes(source.depth)
     };
-    // A field laid down as several deposits: the first as composed (with its cut), the others beside it, one material.
-    if (source.sites) {
-      const first = createLayer({ ...base, opacity: SITES.opacity, inner: SITES.inner, site: 0, balance: false }, index);
-      const others = source.sites.map((masses, n) => {
+    // A field laid down as several deposits of one material: the first carries the field's flow, the others share it.
+    if (source.deposits) {
+      const deposit = (site) => {
+        const own = source.deposits[site];
+        return {
+          ...base,
+          masses: own.masses,
+          cut: null,
+          opacity: own.opacity ?? SITES.opacity,
+          inner: own.inner ?? SITES.inner,
+          gathered: { ...SITES.gathered, ...own.gathered },
+          dispersed: { ...SITES.dispersed, ...own.dispersed },
+          site,
+          balance: false
+        };
+      };
+      const first = createLayer(deposit(0), index);
+      const others = source.deposits.slice(1).map((_, n) => {
         const chances = mulberry32(Math.round(source.depth * 577) + 31 * (n + 1));
-        const layer = withChances(chances, () => createLayer({ ...base, opacity: SITES.opacity, inner: SITES.inner, masses, cut: null, site: n + 1, balance: false }, index, first));
+        const layer = withChances(chances, () => createLayer(deposit(n + 1), index, first));
         layer.chances = chances;
         return layer;
       });
