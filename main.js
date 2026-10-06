@@ -204,8 +204,13 @@ const FLOW = {
 // own furthest), and its heading steers slowly away from its axis and back (heading, turn, steer; bias gives each stream
 // a lean of its own, alternating, so none curves with the others). When a tile has left, the stream may come back
 // (flip): it slows through a stall and runs the other way, the rebuilt tile waiting on the side it left by. It strays across its axis no further than across,
-// and a rebuilt tile comes in at a height of its own (lateral). Nothing here takes the shared chances: each stream
-// draws from its own seed.
+// and a rebuilt tile comes in at a height of its own (lateral). A tile is set behind the other not by where its plane
+// ends but by where its material does: the free space between the last of one's masses and the first of the next is
+// a seeded gap (gap, in half-widths, counted to the edge of what a mass reaches, reach times its radius), however slowly
+// the stream goes, and never so near that any of it could be in view (hide); and a tile is spent only when all of its
+// material is beyond gone, which a run back cannot undo. So a stream that stalls, turns back or lingers does not leave
+// the frame empty of it for long, while its gaps still pass. Nothing here takes the shared chances: each stream draws
+// from its own seed, the gaps from one apart from the heights.
 const PASSAGE = {
   speed: 0.012,
   direction: -0.2,
@@ -230,7 +235,11 @@ const PASSAGE = {
   turn: [35, 70],
   steer: [60, 200],
   across: 0.35,
-  lateral: 0.2
+  lateral: 0.2,
+  reach: 1.4,
+  gap: [0.9, 2],
+  gone: 2.1,
+  hide: 1.5
 };
 // By depth: the far fragments, the faint wash, the small upper stains, the near soft masses and the broad far veil.
 const PASSAGE_LAYERS = [21, 17.5, 15.2, 13.2, 12.4, 11.6, 6, 5];
@@ -1658,6 +1667,28 @@ if (renderer) {
     };
   }
 
+  // Where a tile's material lies along its belt, from its centre, counted downstream: the extent of what its masses reach,
+  // as its map lays them out (see residueJob: a narrower screen spreads them along the tile).
+  function tileReach(stream, spec) {
+    const compose = Math.pow((state.textureAspect || state.aspect) / NOMINAL_ASPECT, 0.4);
+    let low = Infinity;
+    let high = -Infinity;
+    for (const [x, , rx] of spec.masses) {
+      low = Math.min(low, (x - PASSAGE.reach * rx) / compose);
+      high = Math.max(high, (x + PASSAGE.reach * rx) / compose);
+    }
+    return stream.sense > 0 ? [low, high] : [-high, -low];
+  }
+
+  // The origin that sets `spec` behind `other` (if it is there) with a seeded free space between their material, and
+  // wholly out of view.
+  function setBehind(stream, spec, other) {
+    const gap = lerp(...PASSAGE.gap, mulberry32(Math.round(stream.depth * 331) + 6151 * spec.generation)());
+    const [, last] = tileReach(stream, spec);
+    const behind = other ? other.origin + tileReach(stream, other.spec)[0] - gap - last : Infinity;
+    return Math.min(behind, -PASSAGE.hide - stream.offset - last);
+  }
+
   // A stream's own way: its axis, its sense, and the state of its pace and heading, all seeded by its depth.
   function newStream(depth, base, order) {
     const random = mulberry32(Math.round(depth * 1861) + 29);
@@ -1733,11 +1764,10 @@ if (renderer) {
       tile.mesh.rotation.z = stream.axis;
       stream.tiles.push(tile);
     }
+    stream.tiles[1].origin = setBehind(stream, stream.tiles[1].spec, stream.tiles[0]);
     streams.push(stream);
     return stream.tiles;
   });
-  // Beyond this, in view half-widths along the passage, a tile's upstream end has left the frame with any parallax.
-  const PASSAGE_EXIT = 1.7;
   let passageStrength = state.reducedMotion ? PASSAGE.reduced : 1;
   const evolving = layers.filter((layer) => layer.morph && !layer.morph.anchored && !layer.morph.site);
   const unsettled = layers.filter((layer) => layer.morph && layer.morph.anchored);
@@ -1876,7 +1906,7 @@ if (renderer) {
       // A rebuilt passing tile joins the back of its stream only now, so an old map never enters the frame.
       if (layer.placing) {
         layer.placing = false;
-        layer.origin = Math.min(...layer.stream.tiles.filter((tile) => tile !== layer).map((tile) => tile.origin)) - 2 * PASSAGE.length;
+        layer.origin = setBehind(layer.stream, layer.spec, layer.stream.tiles.find((tile) => tile !== layer && !tile.placing));
         // Each cycle comes in at a height of its own, from a seed of its own.
         layer.lateral = (mulberry32(Math.round(layer.stream.depth * 337) + 7919 * layer.stream.generation)() * 2 - 1) * PASSAGE.lateral;
       }
@@ -2468,7 +2498,7 @@ if (renderer) {
       stream.peak = Math.max(stream.peak, stream.offset);
 
       for (const tile of stream.tiles) {
-        if (tile.placing || tile.origin + stream.offset - PASSAGE.length < PASSAGE_EXIT) continue;
+        if (tile.placing || tile.origin + stream.offset + tileReach(stream, tile.spec)[0] < PASSAGE.gone) continue;
         // The tile has left. The stream may turn back on itself: in the other sense the same places lie where they did, the
         // pace it had now runs on the way it was going, and it slows through a stall to run the other way.
         if (random() < PASSAGE.flip) {
