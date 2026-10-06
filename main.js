@@ -123,7 +123,10 @@ const AURA = {
 // internal density is uneven (inner), so even a gathered deposit reads as deposit rather than a solid body. While depth
 // is flat it goes on at flat of its pace, from wherever it is. gathered and dispersed are the two states a deposit moves
 // toward; gain is how far its beats carry it; periods are in seconds; front is the width of the band in which a change
-// passes through a deposit.
+// passes through a deposit. None of the three states a deposit's map holds is fixed for good: the next time it comes
+// apart, is composed or gathers it may be a reconfiguration of itself (variance), made in the background and put in the
+// place of the map in use only where the states that differ are not in view (swap, deep), so a deposit is the same
+// material in the same territory, but never again exactly the same remnants.
 const SITES = {
   opacity: 1,
   gathered: { swell: 1.3, weight: 1.6, bias: 0.22, open: 0.04, warp: 0.35, density: 0.8 },
@@ -134,7 +137,15 @@ const SITES = {
   rest: 0.3,
   inner: 0.42,
   front: 0.5,
-  flat: 0.6
+  flat: 0.6,
+  swap: 0.03,
+  rearm: 0.1,
+  deep: 0.9,
+  variance: {
+    composed: { swell: [0.96, 1.06], weight: [0.8, 1.2], shift: 0.25, bias: 0.04, open: [0, 0.14], spread: [0.95, 1.08], edge: [0.5, 1.5], grain: 3.5 },
+    gathered: { swell: [0.92, 1.1], weight: [0.8, 1.25], shift: 0.3, bias: 0.05, open: [0.8, 1.3], spread: [0.92, 1.1], edge: [0.8, 2.5], grain: 3.5 },
+    dispersed: { swell: [0.9, 1.14], weight: [0.55, 1.4], shift: 0.45, bias: 0.06, open: [0.8, 1.25], spread: [0.9, 1.15], edge: [1.2, 3.5], grain: 3.5 }
+  }
 };
 // Edge language shared by all residue, so no field reads as a painted stroke laid over the others: a contour may hold
 // for a stretch, then dissolve. feather widens the outer threshold of the crisper fields where their masses thin out,
@@ -855,8 +866,36 @@ function residueStates(spec, amount, character = MORPH) {
 }
 
 // A deposit's states: as composed, gathered and dispersed (see SITES). Not drawn at random: what changes is how much of
-// the deposit holds together, while its masses stay where they were laid down.
-function siteStates(spec) {
+// the deposit holds together, while its masses stay where they were laid down. Each of the three is first as the deposit
+// was composed; each can also be a variant of itself, the same state reconfigured: which of its masses hold, a little of
+// where they lie, which of its parts open, how its edge and its inner density are drawn. Variants are seeded by deposit,
+// state and number, so they are the same on every load and draw nothing from the work's own chances. A deposit's
+// configuration is the number of each of its three (see changeable).
+function siteVariant(spec, kind, number) {
+  const random = mulberry32(Math.round(spec.depth * 911) + 131 * spec.site + 7919 * number + 104729 * ["composed", "gathered", "dispersed"].indexOf(kind));
+  const draw = (low, high) => lerp(low, high, random());
+  const range = SITES.variance[kind];
+  const base = kind === "composed" ? { swell: 1, weight: 1, bias: 0, open: 0, spread: 1 } : spec[kind];
+  const each = (value, index) => (Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value);
+  const warpReach = draw(...range.edge);
+  const warpTurn = draw(0, TAU);
+  const toss = (width) => (random() - 0.5) * 2 * width;
+
+  return {
+    ...base,
+    swell: spec.masses.map((_, index) => each(base.swell, index) * draw(...range.swell)),
+    weight: spec.masses.map((_, index) => each(base.weight, index) * draw(...range.weight)),
+    jitter: spec.masses.map(([, , rx, ry]) => [toss(range.shift * rx), toss(range.shift * ry)]),
+    bias: base.bias + toss(range.bias),
+    open: kind === "composed" ? draw(...range.open) : base.open * draw(...range.open),
+    spread: (base.spread ?? 1) * draw(...range.spread),
+    warpShift: [warpReach * Math.cos(warpTurn), warpReach * Math.sin(warpTurn)],
+    densityShift: [toss(range.grain), toss(range.grain)],
+    openShift: [toss(range.grain), toss(range.grain)]
+  };
+}
+
+function siteStates(spec, configuration = { composed: 0, gathered: 0, dispersed: 0 }) {
   // swell and weight may be given for each mass, and spread moves the masses toward or away from the deposit's middle,
   // so a deposit made of several masses can draw together or come apart, and unevenly.
   const each = (value, index) => (Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value);
@@ -864,20 +903,35 @@ function siteStates(spec) {
   const centreY = spec.masses.reduce((sum, mass) => sum + mass[1], 0) / spec.masses.length;
   const toward = (character) => ({
     masses: spec.masses.map(([mx, my, rx, ry, weight, angle = 0], index) => [
-      centreX + (mx - centreX) * (character.spread ?? 1),
-      centreY + (my - centreY) * (character.spread ?? 1),
+      centreX + (mx - centreX) * (character.spread ?? 1) + (character.jitter ? character.jitter[index][0] : 0),
+      centreY + (my - centreY) * (character.spread ?? 1) + (character.jitter ? character.jitter[index][1] : 0),
       rx * each(character.swell, index),
       ry * each(character.swell, index),
       weight * each(character.weight, index),
       angle
     ]),
-    warp: [character.warp, -0.7 * character.warp],
-    density: [character.density, -0.6 * character.density],
+    warp: character.warpShift || [character.warp, -0.7 * character.warp],
+    density: character.densityShift || [character.density, -0.6 * character.density],
+    openShift: character.openShift || [0, 0],
     bias: character.bias,
     open: character.open
   });
+  const state = (kind) => (configuration[kind] ? toward(siteVariant(spec, kind, configuration[kind])) : kind === "composed" ? { masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 } : toward(spec[kind]));
 
-  return [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }, toward(spec.gathered), toward(spec.dispersed)];
+  return [state("composed"), state("gathered"), state("dispersed")];
+}
+
+// Where a deposit's map lies on its plane must not depend on which configuration it holds, or a new map would sit a
+// little differently from the old: so it is taken from every place any of them could reach.
+function siteEnvelope(spec) {
+  const centreX = spec.masses.reduce((sum, mass) => sum + mass[0], 0) / spec.masses.length;
+  const centreY = spec.masses.reduce((sum, mass) => sum + mass[1], 0) / spec.masses.length;
+  const swell = Math.max(...[spec.gathered, spec.dispersed].flatMap((character) => [].concat(character.swell))) * 1.14 + 0.55;
+  const spread = Math.max(spec.gathered.spread ?? 1, spec.dispersed.spread ?? 1, 1) * 1.15;
+  return [{
+    masses: spec.masses.map(([mx, my, rx, ry, , angle = 0]) => [centreX + (mx - centreX) * spread, centreY + (my - centreY) * spread, rx * swell, ry * swell, 1.5, angle]),
+    warp: [0, 0], density: [0, 0], bias: 0, open: 0
+  }];
 }
 
 // An anchored field's total alpha, as its two changes read it, depends on where both changes stand. These sums over its
@@ -936,7 +990,7 @@ function steadiness(m, phaseX, phaseY, amount) {
 // resolution is spent where residue is. It is built a row at a time, so generation can be spread across frames.
 // With alternate states the composed state goes to G, which is what an ordinary alpha map reads, and the others to R
 // and B; the costly material body is computed once for all of them.
-function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }]) {
+function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0], density: [0, 0], bias: 0, open: 0 }], envelope = states) {
   const focusBlur = clamp(Math.abs(spec.depth - FIXATION_DEPTH) / FIXATION_DEPTH, 0, 1);
   const blur = residueBlur(spec);
   // Veils stay broad; stains may keep structure down to about two texels, so their edges break up rather than round off.
@@ -965,7 +1019,7 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
   let right = 0;
   let bottom = 1;
   let top = 0;
-  for (const state of states) {
+  for (const state of envelope.concat(states)) {
     for (const [mx, my, rx, ry, weight, angle = 0] of state.masses) {
       const reach = Math.sqrt(Math.max(0, Math.log(weight / 0.004)));
       const ex = reach * Math.hypot(rx * Math.cos(angle), ry * Math.sin(angle));
@@ -1036,14 +1090,16 @@ function* residueJob(spec, aspect, states = [{ masses: spec.masses, warp: [0, 0]
         const state = states[s];
         const [shiftX, shiftY] = state.warp;
         const [denseX, denseY] = state.density;
-        const edgeX = s === 0 ? warpX : fbm(rx + 1.7 + shiftX, ry + 9.2 + shiftY, 3, cell, limit);
-        const edgeY = s === 0 ? warpY : fbm(rx + 8.3 + shiftX, ry + 2.8 + shiftY, 3, cell, limit);
+        const shifted = s > 0 || shiftX !== 0 || shiftY !== 0;
+        const edgeX = shifted ? fbm(rx + 1.7 + shiftX, ry + 9.2 + shiftY, 3, cell, limit) : warpX;
+        const edgeY = shifted ? fbm(rx + 8.3 + shiftX, ry + 2.8 + shiftY, 3, cell, limit) : warpY;
 
         // Masses only set how much residue a region holds; they never draw an outline.
         // Edges come from the internal strata, so nothing reads as a bounded object.
         const mass = composition(state.masses, (x + edgeX * 0.16) * compose, y + edgeY * 0.07);
         // Broad lobes of the threshold rise and fall separately in each alternate: parts of the field open, others fill.
-        const open = state.open && state.open * fbm(rx * 0.45 + 3.3 * s, ry * 0.45 - 5.9 * s, 2, cell / 0.45, limit);
+        const [openX, openY] = state.openShift || [0, 0];
+        const open = state.open && state.open * fbm(rx * 0.45 + 3.3 * s + openX, ry * 0.45 - 5.9 * s + openY, 2, cell / 0.45, limit);
         fields[s][k] = body * spec.rough + lerp(-0.45, 0.8, mass) + state.bias + open;
         // Only where the field thins toward its outside; its interior keeps the edges of its own strata.
         feathers[s][k] = 1 + EDGE.feather * crisp * lerp(EDGE.firm, 1, loosen) * (1 - smoothstep(0.2, 0.7, mass));
@@ -1178,6 +1234,7 @@ if (renderer) {
     height: 1,
     aspect: NOMINAL_ASPECT,
     textureAspect: 0,
+    variantJob: null,
     reducedMotion: reducedMotionQuery.matches,
     time: rand(0, 400),
     phase: "forming",
@@ -1394,7 +1451,13 @@ if (renderer) {
         phases: [phases[0], phases[1], third[1]],
         weights: [weights[0], weights[1], Math.max(0.05, 1 - weights[0] - weights[1])],
         raw: 0,
-        toward: 0
+        toward: 0,
+        lean: 0,
+        configuration: { composed: 0, gathered: 0, dispersed: 0 },
+        serial: 1,
+        spares: { changeable: null, hidden: null },
+        armed: { changeable: false, hidden: false },
+        envelope: siteEnvelope(spec)
       };
     } else if (MORPH_LAYERS.includes(spec.depth)) {
       const uniforms = {
@@ -1597,10 +1660,12 @@ if (renderer) {
         };
       };
       const first = createLayer(deposit(0), index);
+      first.variantChances = mulberry32(Math.round(source.depth * 613) + 37);
       const others = source.deposits.slice(1).map((_, n) => {
         const chances = mulberry32(Math.round(source.depth * 577) + 31 * (n + 1));
         const layer = withChances(chances, () => createLayer(deposit(n + 1), index, first));
         layer.chances = chances;
+        layer.variantChances = mulberry32(Math.round(source.depth * 613) + 37 * (n + 2));
         return layer;
       });
       return [first, ...others];
@@ -1686,6 +1751,48 @@ if (renderer) {
     const upstream = layers.filter((layer) => layer.deferred).sort((a, b) => a.spec.depth - b.spec.depth);
     state.buildQueue = layers.filter((layer) => !layer.deferred).concat(upstream);
     state.buildJob = null;
+    // A reconfiguration built for the old proportions is of no use to the new ones.
+    state.variantJob = null;
+    for (const layer of deposits) dropSpares(layer);
+  }
+
+  function dropSpares(layer) {
+    for (const kind of Object.keys(layer.morph.spares)) {
+      if (layer.morph.spares[kind]) layer.morph.spares[kind].texture.dispose();
+      layer.morph.spares[kind] = null;
+    }
+  }
+
+  // Where a map lies on its plane, in view half-heights, so the flow is measured on the material, not the map; and the
+  // mip level whose blur matches the grain scale of this field, from the size of one of its texels.
+  function placeMap(layer, value) {
+    const spanX = 1 / value.repeat.x;
+    const spanY = 1 / value.repeat.y;
+    const widthScale = 2 * layer.spec.cover * state.textureAspect;
+    layer.flow.uniforms.fieldFrame.value.set(
+      spanX * widthScale,
+      spanY * 2 * COVER,
+      (-value.offset.x * spanX - 0.5) * widthScale,
+      (-value.offset.y * spanY - 0.5) * 2 * COVER
+    );
+    const texel = (spanY * 2 * COVER) / value.image.height;
+    const levels = Math.floor(Math.log2(Math.max(value.image.width, value.image.height)));
+    layer.flow.uniforms.flowGrain.value.x = clamp(Math.log2((FLOW.grain.scale * layer.flow.size) / texel), 0, levels);
+  }
+
+  // The deposit that lacks a reconfiguration, once every map has been built, and which. Two are kept for each: one that
+  // changes its dispersed and gathered states and keeps the composed one (for when it is at its composed state, where
+  // only that is in view), and one that changes its composed and gathered states and keeps the dispersed one (for when
+  // it is deeply dispersed, where only that is in view). Either takes the place of the map in use, which is then no
+  // longer what the other was made from, so after a change both are made again.
+  function wantsVariant() {
+    if (!state.ready || state.buildQueue.some((queued) => !queued.deferred)) return null;
+    for (const layer of deposits) {
+      const { morph } = layer;
+      const order = morph.toward === 2 && Math.abs(morph.lean) > 0.5 ? ["hidden", "changeable"] : ["changeable", "hidden"];
+      for (const kind of order) if (!morph.spares[kind]) return { layer, kind };
+    }
+    return null;
   }
 
   // Residue is generated a few rows at a time within a small per-frame budget, so assembling the volume never stalls
@@ -1703,7 +1810,7 @@ if (renderer) {
 
     while (state.buildQueue.length && performance.now() < until) {
       const layer = state.buildQueue[0];
-      if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect, layer.morph ? layer.morph.states : undefined);
+      if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect, layer.morph ? layer.morph.states : undefined, layer.morph ? layer.morph.envelope : undefined);
 
       // A further deposit's map is named from its own source too (see withChances).
       const job = state.buildJob;
@@ -1718,26 +1825,47 @@ if (renderer) {
         layer.origin = Math.min(...layer.stream.tiles.filter((tile) => tile !== layer).map((tile) => tile.origin)) - 2 * PASSAGE.length;
       }
       if (layer.morph && layer.morph.anchored) layer.morph.moments = anchoredMoments(value.image.data);
-      // Where the map lies on its plane, in view half-heights, so the flow is measured on the material, not the map.
-      const spanX = 1 / value.repeat.x;
-      const spanY = 1 / value.repeat.y;
-      const widthScale = 2 * layer.spec.cover * state.textureAspect;
-      layer.flow.uniforms.fieldFrame.value.set(
-        spanX * widthScale,
-        spanY * 2 * COVER,
-        (-value.offset.x * spanX - 0.5) * widthScale,
-        (-value.offset.y * spanY - 0.5) * 2 * COVER
-      );
-      // The mip level whose blur matches the grain scale of this field, from the size of one of its texels.
-      const texel = (spanY * 2 * COVER) / value.image.height;
-      const levels = Math.floor(Math.log2(Math.max(value.image.width, value.image.height)));
-      layer.flow.uniforms.flowGrain.value.x = clamp(Math.log2((FLOW.grain.scale * layer.flow.size) / texel), 0, levels);
+      placeMap(layer, value);
       const previous = layer.material.alphaMap;
       layer.material.alphaMap = value;
       layer.material.needsUpdate = !previous;
       layer.mesh.visible = true;
       if (previous) previous.dispose();
       if (!state.buildQueue.some((queued) => !queued.deferred)) state.ready = true;
+    }
+
+    // Once the work is built, each deposit's next way of coming apart is made in the background, a few rows at a time,
+    // named from the deposit's own source; it waits until it is wanted (see updateSites).
+    while (performance.now() < until) {
+      if (!state.variantJob) {
+        const wanted = wantsVariant();
+        if (!wanted) break;
+        const { layer, kind } = wanted;
+        const { morph } = layer;
+        const configuration = { ...morph.configuration };
+        // Each new state takes the next number; the one kept is the one now in use.
+        if (kind === "changeable") {
+          configuration.gathered = morph.serial++;
+          configuration.dispersed = morph.serial++;
+        } else {
+          configuration.composed = morph.serial++;
+          configuration.gathered = morph.serial++;
+        }
+        const states = siteStates(layer.spec, configuration);
+        state.variantJob = { layer, kind, configuration, states, from: morph.configuration, job: residueJob(layer.spec, state.textureAspect, states, morph.envelope) };
+      }
+      const { layer, kind, configuration, states, from, job } = state.variantJob;
+      const { done, value } = withChances(layer.variantChances, () => job.next());
+      if (!done) continue;
+
+      state.variantJob = null;
+      // Made for a configuration that has since been replaced, it is no use.
+      if (from !== layer.morph.configuration) {
+        value.dispose();
+        continue;
+      }
+      renderer.initTexture(value);
+      layer.morph.spares[kind] = { texture: value, states, configuration };
     }
   }
 
@@ -2314,7 +2442,36 @@ if (renderer) {
       }
       morph.uniforms.stateProgress.value = Math.abs(lean);
       morph.uniforms.stateAmount.value = morphStrength;
+      // A new map can take the place of the old without any change to be seen where what differs between them is not in
+      // view. At the composed state only the composed state is: a map that keeps it (changeable) may change the other
+      // two. Deeply dispersed, only the dispersed state is: a map that keeps it (hidden) may change the other two.
+      // Each at most once for every time the deposit has been away from there (rearm), however long it took to make.
+      morph.lean = lean;
+      const layer = deposits[index];
+      const away = Math.abs(lean);
+      if (away > SITES.rearm) morph.armed.changeable = true;
+      if (away < SITES.deep - 0.2) morph.armed.hidden = true;
+      if (morph.armed.changeable && morph.spares.changeable && away < SITES.swap && !state.buildQueue.includes(layer)) {
+        takeVariant(layer, "changeable");
+        morph.armed.changeable = false;
+      } else if (morph.armed.hidden && morph.spares.hidden && lean <= -SITES.deep && !state.buildQueue.includes(layer)) {
+        takeVariant(layer, "hidden");
+        morph.armed.hidden = false;
+      }
     }
+  }
+
+  function takeVariant(layer, kind) {
+    const { morph } = layer;
+    const spare = morph.spares[kind];
+    const previous = layer.material.alphaMap;
+    placeMap(layer, spare.texture);
+    layer.material.alphaMap = spare.texture;
+    if (previous) previous.dispose();
+    morph.states = spare.states;
+    morph.configuration = spare.configuration;
+    morph.spares[kind] = null;
+    dropSpares(layer);
   }
 
   function wander(channel, t) {
@@ -2440,7 +2597,7 @@ if (renderer) {
 
     state.lastFrame = now;
     // Once every field has a map, rebuilding a passing tile takes a smaller share of each frame.
-    if (state.buildQueue.length) {
+    if (state.buildQueue.length || state.variantJob || wantsVariant()) {
       const settled = state.ready && state.buildQueue.every((layer) => layer.material.alphaMap);
       buildTextures(settled ? TEXTURE_BUDGET_MS / 2 : TEXTURE_BUDGET_MS);
     }
