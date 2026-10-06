@@ -189,22 +189,48 @@ const FLOW = {
   cells: 8,
   size: 64
 };
-// Passage: some fields are not held in place but carried slowly across the frame, all in one oblique direction, while
-// the others stay where they are, like a disturbance held on the retina while the field beyond it goes by. Each passing
-// field moves at its own depth, nearer material faster, so passage is itself a depth cue. The passage is never steady:
-// it slows and gathers again (sway), and while depth flattens every field converges on one much slower speed (flat), so
-// the passage all but stalls on the shared plane. A passing field is a stream of two long tiles: a tile that has left
-// the frame is rebuilt with new masses of the same material and joins the back of the stream, so what arrives is never
-// what left. speed is in view half-widths per second at the fixation depth; direction is in radians from the screen's
-// horizontal; length is a tile's half-length in view half-widths; clusters is how many masses a new tile may carry.
+// Passage: some fields are not held in place but carried slowly across the frame, while the others stay where they are,
+// like a disturbance held on the retina while the field beyond it goes by. Each passing field moves at its own depth,
+// nearer material faster, so passage is itself a depth cue, and while depth flattens every field converges on one much
+// slower speed (flat), so the passage all but stalls on the shared plane. A passing field is a stream of two long
+// tiles: a tile that has left the frame is rebuilt with new masses of the same material and joins the back of the
+// stream, so what arrives is never what left. speed is in view half-widths per second at the fixation depth; direction
+// is in radians from the screen's horizontal; length is a tile's half-length in view half-widths; clusters is how many
+// masses a new tile may carry.
+// No two streams agree on where they are going. Each runs along an axis of its own (axis: how far it may lie from
+// direction) and in a sense of its own (senses: some go the other way, entering from the right), and its way is not
+// steady: its pace is lagged toward a target that holds for a time and is then chosen again (paces: how far, how long,
+// how likely), so it stalls, gathers, and now and then runs a little back (back: the furthest it may fall behind its
+// own furthest), and its heading steers slowly away from its axis and back (heading, turn, steer; bias gives each stream
+// a lean of its own, alternating, so none curves with the others). When a tile has left, the stream may come back
+// (flip): it slows through a stall and runs the other way, the rebuilt tile waiting on the side it left by. It strays across its axis no further than across,
+// and a rebuilt tile comes in at a height of its own (lateral). Nothing here takes the shared chances: each stream
+// draws from its own seed.
 const PASSAGE = {
   speed: 0.012,
   direction: -0.2,
-  sway: 0.4,
   flat: 0.3,
   length: 1.8,
   clusters: [1, 3],
-  reduced: 0.3
+  reduced: 0.3,
+  axis: 0.45,
+  senses: { 21: -1, 17.5: 1, 15.2: 1, 13.2: -1, 12.4: 1, 11.6: -1, 6: -1, 5: 1 },
+  lag: [15, 30],
+  paces: [
+    { share: 0.2, pace: [0, 0.07], hold: [20, 60] },
+    { share: 0.24, pace: [0.15, 0.45], hold: [45, 120] },
+    { share: 0.34, pace: [0.75, 1.05], hold: [60, 180] },
+    { share: 0.12, pace: [1.15, 1.5], hold: [40, 90] },
+    { share: 0.1, pace: [-0.6, -0.2], hold: [15, 45] }
+  ],
+  back: 0.8,
+  heading: 1.35,
+  bias: 0.3,
+  flip: 0.4,
+  turn: [35, 70],
+  steer: [60, 200],
+  across: 0.35,
+  lateral: 0.2
 };
 // By depth: the far fragments, the faint wash, the small upper stains, the near soft masses and the broad far veil.
 const PASSAGE_LAYERS = [21, 17.5, 15.2, 13.2, 12.4, 11.6, 6, 5];
@@ -1617,19 +1643,42 @@ if (renderer) {
   }
 
   // The composed tile is turned with its passage; its masses and cut are turned back, so the field opens as composed.
-  function seatInTile(spec) {
-    const cos = Math.cos(PASSAGE.direction);
-    const sin = Math.sin(PASSAGE.direction);
+  function seatInTile(spec, axis) {
+    const cos = Math.cos(axis);
+    const sin = Math.sin(axis);
     const a = NOMINAL_ASPECT;
 
     return {
       ...spec,
       cover: PASSAGE.length,
       masses: spec.masses.map(([x, y, rx, ry, weight, angle = 0]) => [
-        x * cos + (y / a) * sin, y * cos - x * a * sin, rx, ry, weight, angle - PASSAGE.direction
+        x * cos + (y / a) * sin, y * cos - x * a * sin, rx, ry, weight, angle - axis
       ]),
       cut: spec.cut && [spec.cut[0] * cos + spec.cut[1] * a * sin, spec.cut[1] * cos - (spec.cut[0] * sin) / a, spec.cut[2]]
     };
+  }
+
+  // A stream's own way: its axis, its sense, and the state of its pace and heading, all seeded by its depth.
+  function newStream(depth, base, order) {
+    const random = mulberry32(Math.round(depth * 1861) + 29);
+    const toss = (width) => (random() * 2 - 1) * width;
+    const stream = {
+      depth, base, offset: 0, across: 0, peak: 0, velocity: 0, crossing: 0, generation: 0, tiles: [],
+      axis: PASSAGE.direction + toss(PASSAGE.axis),
+      sense: PASSAGE.senses[depth] ?? 1,
+      random,
+      chances: mulberry32(Math.round(depth * 443) + 11),
+      lean: (order % 2 ? 1 : -1) * lerp(0.4, 1, random()) * PASSAGE.bias,
+      pace: 0, paceTarget: 0, paceUntil: lerp(30, 100, random()), paceKind: 1,
+      heading: 0, headingTarget: 0, headingUntil: lerp(30, 120, random()),
+      lag: lerp(...PASSAGE.lag, random()), turn: lerp(...PASSAGE.turn, random()),
+      clock: 0
+    };
+    // It begins at a pace of its own, not all at once at full pace.
+    stream.pace = stream.paceTarget = lerp(0.2, 0.85, random());
+    stream.heading = stream.lean;
+    stream.headingTarget = stream.lean;
+    return stream;
   }
 
   const streams = [];
@@ -1673,14 +1722,15 @@ if (renderer) {
     if (!PASSAGE_LAYERS.includes(source.depth)) return [createLayer(base, index)];
 
     // The first tile carries the field as composed, so the work opens on its composition; the next waits upstream.
-    const stream = { depth: source.depth, base, offset: 0, velocity: 0, generation: 0, tiles: [] };
+    const stream = newStream(source.depth, base, streams.length);
     for (let t = 0; t < 2; t += 1) {
-      const tile = createLayer(t === 0 ? seatInTile(base) : tileSpec(stream), index);
+      const tile = createLayer(t === 0 ? seatInTile(base, stream.axis) : tileSpec(stream), index);
       tile.stream = stream;
       tile.origin = -2 * PASSAGE.length * t;
+      tile.lateral = 0;
       // The upstream tile is not in the frame for a while yet, so it is built last and does not hold up the volume.
       tile.deferred = t > 0;
-      tile.mesh.rotation.z = PASSAGE.direction;
+      tile.mesh.rotation.z = stream.axis;
       stream.tiles.push(tile);
     }
     streams.push(stream);
@@ -1741,6 +1791,7 @@ if (renderer) {
   const anchor = new Vector3();
   const probe = new Vector3();
   const layerCentre = new Vector3();
+  const passage = new Vector2();
 
   renderer.setClearColor(TONE.field, 1);
   for (const sheet of Object.values(textSheets)) sheet.texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -1813,8 +1864,11 @@ if (renderer) {
       if (!state.buildJob) state.buildJob = residueJob(layer.spec, state.textureAspect, layer.morph ? layer.morph.states : undefined, layer.morph ? layer.morph.envelope : undefined);
 
       // A further deposit's map is named from its own source too (see withChances).
+      // So is a passing tile's rebuild, which happens when the passage says and not before: its objects are named from its
+      // stream's own source, so where the streams are never changes what the work's own chances give.
       const job = state.buildJob;
-      const { done, value } = layer.chances ? withChances(layer.chances, () => job.next()) : job.next();
+      const source = layer.chances || (layer.placing ? layer.stream.chances : null);
+      const { done, value } = source ? withChances(source, () => job.next()) : job.next();
       if (!done) continue;
 
       state.buildQueue.shift();
@@ -1823,6 +1877,8 @@ if (renderer) {
       if (layer.placing) {
         layer.placing = false;
         layer.origin = Math.min(...layer.stream.tiles.filter((tile) => tile !== layer).map((tile) => tile.origin)) - 2 * PASSAGE.length;
+        // Each cycle comes in at a height of its own, from a seed of its own.
+        layer.lateral = (mulberry32(Math.round(layer.stream.depth * 337) + 7919 * layer.stream.generation)() * 2 - 1) * PASSAGE.lateral;
       }
       if (layer.morph && layer.morph.anchored) layer.morph.moments = anchoredMoments(value.image.data);
       placeMap(layer, value);
@@ -2011,11 +2067,11 @@ if (renderer) {
     let hitX = from.x + (point.x - from.x) * reach - layerCentre.x - (layer.aura ? layer.aura.x : 0);
     let hitY = from.y + (point.y - from.y) * reach - layerCentre.y - (layer.aura ? layer.aura.y : 0);
     if (layer.stream) {
-      const cos = Math.cos(PASSAGE.direction);
-      const sin = Math.sin(PASSAGE.direction);
-      const along = (layer.origin + layer.stream.offset + layer.stream.velocity * ahead) * HALF_TAN * depth * state.aspect * scale;
-      hitX -= along * cos;
-      hitY -= along * sin;
+      const cos = Math.cos(layer.stream.axis);
+      const sin = Math.sin(layer.stream.axis);
+      passageShift(layer, HALF_TAN * depth * state.aspect * scale, ahead, passage);
+      hitX -= passage.x;
+      hitY -= passage.y;
       [hitX, hitY] = [hitX * cos + hitY * sin, hitY * cos - hitX * sin];
     }
     const planeU = 0.5 + hitX / (2 * HALF_TAN * depth * state.aspect * layer.spec.cover * scale);
@@ -2367,20 +2423,64 @@ if (renderer) {
   }
 
   // Passing fields keep going through every phase. Nearer material passes faster; as depth flattens every field takes
-  // one slow shared speed, so the passage cannot reopen depth. A tile whose upstream end has left the frame is rebuilt
-  // with new masses and placed at the back of its stream once its map is ready.
+  // one slow shared speed, so the passage cannot reopen depth. Each stream's pace is lagged toward a target that holds
+  // for a time, and its heading toward one that is chosen again less often, so it has inertia: it neither jitters nor
+  // turns sharply, and it can all but stop while its shape goes on changing. Nothing here resets with phases. A tile
+  // whose upstream end has left the frame is rebuilt with new masses and placed at the back of its stream once its map
+  // is ready.
   function updatePassage(dt) {
     passageStrength = lerp(passageStrength, state.reducedMotion ? PASSAGE.reduced : 1, 1 - Math.exp(-dt / 5));
     const align = state.params.align;
-    const t = state.time;
-    const sway = 1 + PASSAGE.sway * (0.6 * Math.sin((t * TAU) / 181 + 2.3) + 0.4 * Math.sin((t * TAU) / 277 + 0.8));
 
     for (const stream of streams) {
-      stream.velocity = PASSAGE.speed * passageStrength * sway * lerp(FIXATION_DEPTH / stream.depth, PASSAGE.flat, align);
+      const { random } = stream;
+      stream.clock += dt;
+      if (stream.clock >= stream.paceUntil) {
+        // A new target pace: never two runs back in a row, and none while the stream is already as far back as it may go.
+        const back = PASSAGE.paces.length - 1;
+        let roll = random();
+        let kind = PASSAGE.paces.findIndex((step) => (roll -= step.share) < 0);
+        if (kind < 0) kind = 2;
+        if (kind === back && (stream.paceKind === back || stream.peak - stream.offset > PASSAGE.back * 0.5)) kind = 2;
+        const step = PASSAGE.paces[kind];
+        stream.paceKind = kind;
+        stream.paceTarget = lerp(...step.pace, random());
+        stream.paceUntil = stream.clock + lerp(...step.hold, random());
+      }
+      if (stream.clock >= stream.headingUntil) {
+        // Mostly near its own lean, sometimes well away from it; and when it has strayed far across its axis, back.
+        let target = clamp(stream.lean + (random() + random() - 1) * PASSAGE.heading, -PASSAGE.heading, PASSAGE.heading);
+        if (Math.abs(stream.across) > 0.7 * PASSAGE.across) target = -Math.sign(stream.across) * lerp(0.3, 0.9, random());
+        stream.headingTarget = target;
+        stream.headingUntil = stream.clock + lerp(...PASSAGE.steer, random());
+      }
+      stream.pace = lerp(stream.pace, stream.paceTarget, 1 - Math.exp(-dt / stream.lag));
+      stream.heading = lerp(stream.heading, stream.headingTarget, 1 - Math.exp(-dt / stream.turn));
+      // Not further back than it may go; and never carried out across more than its range.
+      let pace = stream.pace;
+      if (pace < 0 && stream.peak - stream.offset > PASSAGE.back) pace = 0;
+      const speed = PASSAGE.speed * passageStrength * lerp(FIXATION_DEPTH / stream.depth, PASSAGE.flat, align) * pace;
+      stream.velocity = speed * Math.cos(stream.heading);
+      stream.crossing = speed * Math.sin(stream.heading);
+      if (Math.abs(stream.across) >= PASSAGE.across && Math.sign(stream.crossing) === Math.sign(stream.across)) stream.crossing = 0;
       stream.offset += stream.velocity * dt;
+      stream.across += stream.crossing * dt;
+      stream.peak = Math.max(stream.peak, stream.offset);
 
       for (const tile of stream.tiles) {
         if (tile.placing || tile.origin + stream.offset - PASSAGE.length < PASSAGE_EXIT) continue;
+        // The tile has left. The stream may turn back on itself: in the other sense the same places lie where they did, the
+        // pace it had now runs on the way it was going, and it slows through a stall to run the other way.
+        if (random() < PASSAGE.flip) {
+          stream.sense = -stream.sense;
+          stream.offset = -stream.offset;
+          stream.peak = stream.offset;
+          for (const other of stream.tiles) other.origin = -other.origin;
+          stream.pace = -Math.abs(stream.pace) - 0.05;
+          stream.paceKind = 1;
+          stream.paceTarget = lerp(0.3, 0.8, random());
+          stream.paceUntil = stream.clock + lerp(60, 150, random());
+        }
         tile.spec = tileSpec(stream);
         if (tile.morph) tile.morph.states = residueStates(tile.spec, MORPH.amount);
         tile.placing = true;
@@ -2388,6 +2488,17 @@ if (renderer) {
         if (!state.buildQueue.includes(tile)) state.buildQueue.push(tile);
       }
     }
+  }
+
+  // Where a tile lies from where it was composed, in the layer's own view scale (half-widths), `ahead` seconds from now:
+  // along its stream's axis, in the stream's sense, and across it.
+  function passageShift(layer, unit, ahead, target) {
+    const { stream } = layer;
+    const along = stream.sense * (layer.origin + stream.offset + stream.velocity * ahead) * unit;
+    const across = (stream.across + stream.crossing * ahead + layer.lateral) * unit;
+    const cos = Math.cos(stream.axis);
+    const sin = Math.sin(stream.axis);
+    return target.set(along * cos - across * sin, along * sin + across * cos);
   }
 
   // The flow runs on its own clock, at each field's own pace. Each displacement's feature changes along the volume's time
@@ -2503,9 +2614,9 @@ if (renderer) {
       const scale = alignOffset(depth, position) * (1 + drift * 0.015 * Math.sin((t * TAU * rate) / 71 + layer.seed * 0.6));
       if (layer.stream) {
         // Carried along the passage in the layer's own view scale, so flattening still holds it on the shared plane.
-        const along = (layer.origin + layer.stream.offset) * HALF_TAN * depth * state.aspect * scale;
-        position.x += along * Math.cos(PASSAGE.direction);
-        position.y += along * Math.sin(PASSAGE.direction);
+        passageShift(layer, HALF_TAN * depth * state.aspect * scale, 0, passage);
+        position.x += passage.x;
+        position.y += passage.y;
       }
       if (layer.aura) {
         // In the layer's own view scale, so a stray reads the same size at every depth and flattening still holds.
